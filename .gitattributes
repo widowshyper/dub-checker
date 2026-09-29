@@ -1,0 +1,8 @@
+* text=auto
+# cmd.exe needs CRLF: with LF-only line endings, goto/call :label can fail.
+*.bat text eol=crlf
+# ...and sh needs LF.
+*.sh text eol=lf
+packaging/README.txt text eol=crlf
+*.ico binary
+*.png binary
