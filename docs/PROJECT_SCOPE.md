@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 2.5.0
+**Version:** 2.5.1
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -40,6 +40,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 **Actions (right-click menu)**
 - Fix a wrong AniList match.
 - Open the file location (after a Local files scan).
+- Open the show's page in Sonarr.
 - Ask Sonarr to search for replacements of original-only episodes.
 - Search Nyaa for "show name dual audio" in the web browser.
 - Open the show's AniList page.
@@ -94,7 +95,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Build and test**
 - PyInstaller (`build.bat`) produces the portable one-folder app and zip.
-- A unittest suite of 242 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
+- A unittest suite of 245 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
 
 ## Out of scope
 

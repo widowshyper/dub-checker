@@ -105,6 +105,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
 - Right-click for more options:
   - **Wrong show? Fix the match...** lets you paste the right AniList address, and only that season is checked again.
   - **Open file location** (after a Local files scan) opens the season's folder in Explorer with its first episode selected; on a show row it opens the show's folder. In the episode window, right-click a file to open its location.
+  - **Open in Sonarr** (when Sonarr is set up) opens the show's page in Sonarr in your web browser. The show is found the same way as for the replacement search below: by its folder name, then its title. It works after a Local files scan too.
   - **Search for replacements in Sonarr...** (when Sonarr is set up) asks Sonarr to look for new releases of the episodes that only have the original-language audio. On an episode row it searches for just that episode. See [Sonarr](#sonarr).
   - **Search Nyaa for "... dual audio"** opens [nyaa.si](https://nyaa.si/) in your web browser, searching the Anime category for the show's name plus "dual audio", most seeders first. If AniList knows the show by another name (such as its romaji title, which many releases use), that search is offered too. The episode window has the same search as a button. Dub Checker only opens the search page; it doesn't download anything.
 - **Search** (Ctrl+F) narrows the list by name; Esc clears it.

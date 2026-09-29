@@ -24,7 +24,7 @@ from dubchecker.media_probe import MediaProber
 from dubchecker.models import STATUS_BY_CODE, Category, FileResult, FileStatus, ShowResult, language_word
 from dubchecker.pipeline import ScanOutcome, ScanPipeline, evaluate_season
 from dubchecker.results_store import SavedScan, delete_scan, load_scan, save_scan
-from dubchecker.sonarr import SonarrClient, SonarrError, search_for_replacements
+from dubchecker.sonarr import SonarrClient, SonarrError, search_for_replacements, series_page_url
 
 log = logging.getLogger(__name__)
 
@@ -789,6 +789,9 @@ class App:
                     changed = self._on_replaced(payload[0]) or changed
                 elif kind == "notice":
                     self.status_var.set(payload[0])
+                elif kind == "open_url":
+                    ui.open_url(payload[0])
+                    self.status_var.set(payload[1])
                 elif kind == "error":
                     self.status_var.set(payload[0].splitlines()[0])
                     messagebox.showerror(APP_NAME, payload[0], parent=self.root)
@@ -1404,11 +1407,13 @@ class App:
             if self.results_are_local:
                 menu.add_command(label="Open file location", command=lambda: self.open_location(seasons, False))
             title = self.titles.get(iid, ("", iid[2:]))[1]
+        show_id = result.group.folder_name if result is not None else iid[2:]
         if self.sonarr_configured:
             wanted = ui.original_only_files(seasons) if files is None else files
             label = "Search for a replacement in Sonarr..." if files is not None else \
                 "Search for replacements in Sonarr..."
             menu.add_separator()
+            menu.add_command(label="Open in Sonarr", command=lambda: self.open_in_sonarr(show_id, title))
             menu.add_command(label=label, command=lambda: self.search_sonarr(seasons, wanted),
                              state="normal" if wanted else "disabled")
         menu.add_separator()
@@ -1417,7 +1422,6 @@ class App:
                              command=lambda n=name: self.search_nyaa(n))
         menu.add_separator()
         menu.add_command(label="Copy show name", command=lambda: self.copy_text(title))
-        show_id = result.group.folder_name if result is not None else iid[2:]
         menu.add_command(label="Dismiss this show (hide it from every tab)",
                          command=lambda: self.dismiss_show(show_id, title))
         try:
@@ -1488,6 +1492,26 @@ class App:
         """Open a Nyaa search for '<title> dual audio' in the web browser."""
         ui.open_url(ui.nyaa_search_url(title))
         self.status_var.set(f"Opened a Nyaa search for “{ui.nyaa_query(title)}” in your browser.")
+
+    def open_in_sonarr(self, folder_name: str, title: str) -> None:
+        """Open the show's page in Sonarr in the web browser. Finding it asks Sonarr, so that's done
+        in the background."""
+        self.status_var.set(f"Finding {title} in Sonarr...")
+
+        def work() -> None:
+            try:
+                client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
+                url = series_page_url(client, folder_name, title)
+                self.queue.put(("open_url", (url, f"Opened {title} in Sonarr in your browser.")))
+            except SonarrError as exc:
+                self.queue.put(("error", (str(exc),)))
+            except Exception as exc:
+                log.exception("Opening the show in Sonarr failed")
+                self.queue.put(("error", (f"Couldn't find the show in Sonarr: {exc}",)))
+
+        thread = threading.Thread(target=work, name="sonarr-open", daemon=True)
+        self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
+        thread.start()
 
     def search_sonarr(self, seasons: list[ShowResult], files: list[str] | None = None) -> None:
         """Ask Sonarr to look for new releases of episodes that only have the original-language audio.

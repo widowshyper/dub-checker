@@ -13,13 +13,13 @@ from dubchecker.config import Config
 from dubchecker.media_probe import build_file_result
 from dubchecker.models import Category, FileStatus
 from dubchecker.sonarr import (SonarrClient, SonarrError, connection_summary, last_path_part, map_path,
-                               normalise_url, search_for_replacements, tracks_from_media_info)
+                               normalise_url, search_for_replacements, series_page_url, tracks_from_media_info)
 from tests.fakes import FakeLookup, FakeProber, make_pipeline, touch
 
 API_KEY = "secret"
 SERIES = [
     {"id": 1, "title": "Attack on Titan", "year": 2013, "path": "/tv/Attack on Titan (2013)", "seriesType": "anime",
-     "status": "continuing", "seasons": [
+     "titleSlug": "attack-on-titan", "status": "continuing", "seasons": [
          {"seasonNumber": 1, "statistics": {"previousAiring": "2013-09-28T15:00:00Z"}},
          {"seasonNumber": 2, "statistics": {"previousAiring": "2017-06-17T15:00:00Z",
                                             "nextAiring": "2099-01-07T15:00:00Z"}}]},
@@ -232,10 +232,92 @@ class ServerTests(unittest.TestCase):
         with self.assertRaisesRegex(SonarrError, "Couldn't find"):
             search_for_replacements(client, "Unknown Show", "Unknown Show", [1], ["x.mkv"])
 
+    def test_series_page_address(self) -> None:
+        client = SonarrClient(self.url, API_KEY)
+        self.assertEqual(series_page_url(client, "My AoT folder", "Attack on Titan"),
+                         f"{self.url}/series/attack-on-titan")  # keeps the URL base (/sonarr)
+        with self.assertRaisesRegex(SonarrError, "didn't say where"):
+            series_page_url(client, "Frieren", "Frieren")  # no titleSlug in the answer
+        with self.assertRaisesRegex(SonarrError, "Couldn't find “Unknown Show” in Sonarr"):
+            series_page_url(client, "Unknown Show", "Unknown Show")
+
     def test_bad_key_is_reported(self) -> None:
         pipeline, _ = make_pipeline(self.data, self.cache, FakeProber([]), FakeLookup([]))
         outcome = pipeline.run(sonarr=SonarrClient(self.url, "nope"))
         self.assertIn("rejected the API key", outcome.error)
+
+
+class OpenInSonarrWindowTests(unittest.TestCase):
+    """Right-click > Open in Sonarr, against the mock server."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from tests.test_gui import tk_available
+        if not tk_available():
+            raise unittest.SkipTest("no display for Tk")
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), MockSonarr)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.url = f"http://127.0.0.1:{cls.server.server_port}/sonarr"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def setUp(self) -> None:
+        import tkinter as tk
+
+        from dubchecker.config import Overrides
+        from dubchecker.gui import App, AppContext
+        from tests.test_gui import season
+        self._tmp = tempfile.TemporaryDirectory()
+        data = Path(self._tmp.name)
+        self.cache = Cache(data / "cache.db")
+        config = Config(theme="light", sonarr_url=self.url, sonarr_api_key=API_KEY)
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.app = App(self.root, AppContext(config, data / "config.json", Overrides(data / "o.json"), self.cache,
+                                             data))
+        self.app.model.add(season("Attack on Titan (2013)", 2, Category.NEEDS_DUB))
+        self.app.refresh_table()
+
+    def tearDown(self) -> None:
+        self.app.stop_polling()
+        self.root.destroy()
+        self.cache.close()
+        self._tmp.cleanup()
+
+    def open_from_menu(self) -> list[str]:
+        """Right-click the row, choose Open in Sonarr, and wait for the browser to be asked to open."""
+        from types import SimpleNamespace
+        from unittest import mock
+        row = self.app.tree.get_children()[0]
+        menus, opened = [], []
+        with mock.patch("tkinter.Menu.tk_popup", lambda menu, *_: menus.append(menu)), \
+                mock.patch.object(self.app.tree, "identify_row", return_value=row):
+            self.app._on_right_click(SimpleNamespace(y=1, x_root=0, y_root=0))
+        menu = menus[0]
+        with mock.patch("dubchecker.ui_common.open_url", opened.append):
+            menu.invoke(next(i for i in range(menu.index("end") + 1)
+                             if menu.type(i) == "command" and menu.entrycget(i, "label") == "Open in Sonarr"))
+            for thread in self.app.helpers:
+                thread.join(10)
+            self.app._poll()
+        return opened
+
+    def test_opens_the_series_page(self) -> None:
+        self.assertEqual(self.open_from_menu(), [f"{self.url}/series/attack-on-titan"])
+        self.assertEqual(self.app.status_var.get(), "Opened Attack on Titan (2013) in Sonarr in your browser.")
+
+    def test_a_show_sonarr_does_not_have(self) -> None:
+        from unittest import mock
+        self.app.model.clear()
+        from tests.test_gui import season
+        self.app.model.add(season("Not In Sonarr", 1, Category.NEEDS_DUB))
+        self.app.refresh_table()
+        with mock.patch("dubchecker.gui.messagebox.showerror") as error:
+            self.assertEqual(self.open_from_menu(), [])
+        self.assertIn("Couldn't find", error.call_args.args[1])
 
 
 if __name__ == "__main__":

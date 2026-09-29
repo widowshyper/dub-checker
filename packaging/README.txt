@@ -38,7 +38,8 @@ matched to the wrong AniList entry, right-click it and choose
 "Wrong show? Fix the match...".
 
 Right-click also offers "Open file location" (after a Local files scan) and,
-when Sonarr is set up, "Search for replacements in Sonarr...", which asks
+when Sonarr is set up, "Open in Sonarr" (the show's page in Sonarr, in your
+web browser) and "Search for replacements in Sonarr...", which asks
 Sonarr to look for new releases of the episodes that only have the original
 language audio. "Search Nyaa for ... dual audio" opens a search on nyaa.si in
 your web browser.

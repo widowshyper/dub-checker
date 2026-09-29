@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 from dubchecker.models import AirInfo
 
@@ -23,6 +24,7 @@ class SonarrSeries:
     series_type: str
     status: str = ""                                   # continuing, ended, upcoming or deleted
     seasons: list = field(default_factory=list)        # Sonarr's season list, with per-season statistics
+    title_slug: str = ""                               # the series' page in Sonarr: <address>/series/<slug>
 
 
 def normalise_url(url: str) -> str:
@@ -123,7 +125,8 @@ class SonarrClient:
     def series(self) -> list[SonarrSeries]:
         return [SonarrSeries(id=int(s["id"]), title=str(s.get("title") or ""), year=s.get("year") or None,
                              path=str(s.get("path") or ""), series_type=str(s.get("seriesType") or "").lower(),
-                             status=str(s.get("status") or "").lower(), seasons=list(s.get("seasons") or []))
+                             status=str(s.get("status") or "").lower(), seasons=list(s.get("seasons") or []),
+                             title_slug=str(s.get("titleSlug") or ""))
                 for s in self._get("/api/v3/series") or [] if "id" in s]
 
     def calendar(self, start: str, end: str) -> list[dict]:
@@ -155,6 +158,23 @@ def _plain_title(title: str) -> str:
     return " ".join(re.sub(r"[\W_]+", " ", title.casefold()).split())
 
 
+def _find_or_explain(client: SonarrClient, folder_name: str, title: str) -> SonarrSeries:
+    series = client.find_series(folder_name, title)
+    if series is None:
+        raise SonarrError(f"Couldn't find “{title}” in Sonarr. Sonarr needs to manage this show "
+                          f"(in a folder called “{folder_name}”) before it can be opened or searched for there.")
+    return series
+
+
+def series_page_url(client: SonarrClient, folder_name: str, title: str) -> str:
+    """The address of the show's page in Sonarr's web interface, found like the replacement search:
+    by folder name, then by title."""
+    series = _find_or_explain(client, folder_name, title)
+    if not series.title_slug:
+        raise SonarrError(f"Sonarr didn't say where the page for “{series.title}” is.")
+    return f"{client.url}/series/{quote(series.title_slug)}"
+
+
 def search_for_replacements(client: SonarrClient, folder_name: str, title: str, seasons: list[int | None],
                             file_names: list[str]) -> str:
     """Ask Sonarr to search again for the episodes whose files are named in ``file_names``.
@@ -163,10 +183,7 @@ def search_for_replacements(client: SonarrClient, folder_name: str, title: str, 
     local-files scan of a library Sonarr manages. If none match, whole seasons (or the
     series) are searched instead. Returns a message for the status line.
     """
-    series = client.find_series(folder_name, title)
-    if series is None:
-        raise SonarrError(f"Couldn't find “{title}” in Sonarr. Sonarr needs to manage this show "
-                          f"(in a folder called “{folder_name}”) before it can search for it.")
+    series = _find_or_explain(client, folder_name, title)
     wanted = {name.casefold() for name in file_names}
     file_ids = {ef["id"] for ef in client.episode_files(series.id)
                 if "id" in ef and last_path_part(str(ef.get("path") or "")).casefold() in wanted}
