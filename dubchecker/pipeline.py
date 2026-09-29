@@ -24,9 +24,10 @@ from dubchecker.config import Config, Overrides, to_portable
 from dubchecker.dub_sources import LookupResult
 from dubchecker.media_probe import ProbeUnavailable, build_file_result
 from dubchecker.models import (Cancelled, Category, FileResult, FileStatus, ShowGroup, ShowResult, VideoFile, season_key,
-                               season_sort_key, strip_id_tags)
+                               air_from_match, season_sort_key, strip_id_tags)
 from dubchecker.scanner import FolderLister, group_show, is_network_path, list_library, natural_key
-from dubchecker.sonarr import SonarrClient, SonarrError, last_path_part, map_path, tracks_from_media_info
+from dubchecker.sonarr import (SonarrAirStatus, SonarrClient, SonarrError, last_path_part, map_path,
+                              tracks_from_media_info)
 
 log = logging.getLogger(__name__)
 
@@ -174,8 +175,19 @@ class ScanOutcome:
 
 
 def evaluate_season(group: ShowGroup, files: list[FileResult], service: LookupService,
-                    override_id: int | None, threshold: float) -> ShowResult:
-    """Look one season up and categorise it. Used by the scan and by Fix match."""
+                    override_id: int | None, threshold: float, air_source: str = "anilist") -> ShowResult:
+    """Look one season up and categorise it. Used by the scan and by Fix match.
+
+    With air status from AniList, the season also gets the air status AniList gave with the match.
+    """
+    result = _evaluate_season(group, files, service, override_id, threshold)
+    if air_source == "anilist":
+        result.air = air_from_match(result.match)
+    return result
+
+
+def _evaluate_season(group: ShowGroup, files: list[FileResult], service: LookupService,
+                     override_id: int | None, threshold: float) -> ShowResult:
     try:
         lookup = service.lookup(group, override_id)
     except Cancelled:
@@ -204,6 +216,7 @@ class ScanPipeline:
         self.stopped = False
         self.warnings: list[str] = []
         self._stats_lock = threading.Lock()
+        self.air_client: SonarrClient | None = None
 
     # ------------------------------------------------------------ helpers
 
@@ -225,7 +238,11 @@ class ScanPipeline:
 
     # ------------------------------------------------------------ entry point
 
-    def run(self, root: str | None = None, sonarr: SonarrClient | None = None) -> ScanOutcome:
+    def run(self, root: str | None = None, sonarr: SonarrClient | None = None,
+            air_client: SonarrClient | None = None) -> ScanOutcome:
+        """Scan a folder (`root`) or Sonarr (`sonarr`). `air_client` is the Sonarr to ask for air status
+        when that's set to come from Sonarr; a Sonarr scan uses its own client."""
+        self.air_client = air_client or sonarr
         started = time.monotonic()
         outcome = ScanOutcome(stats=self.stats)
         try:
@@ -467,18 +484,42 @@ class ScanPipeline:
                     self.progress(f"Checking AniList: show {number + 1} of {len(pending)} ({s.group.display_title})",
                                   number / len(pending))
                     result = evaluate_season(s.group, s.files, service, self.overrides.get(s.group.key),
-                                             self.config.confidence_threshold)
+                                             self.config.confidence_threshold, self.config.air_status_source)
                 except Cancelled:
                     self._stop_rest(pending[number:], results)
                     break
                 self.stats.lookups += 1
                 results.append(result)
                 self.emit("result", result)
-            if self.config.check_air_status and not self.stopped:
+            if not self.stopped and self.config.air_status_source == "anilist":
                 self._add_air_status(results, service)
+            elif not self.stopped and self.config.air_status_source == "sonarr":
+                self._add_sonarr_air_status(results)
         finally:
             self.stats.lookup_time = time.monotonic() - started
         return results
+
+    def _add_sonarr_air_status(self, results: list[ShowResult]) -> None:
+        """Air status from Sonarr: its series list and calendar, two requests for the whole library.
+        Shows are matched by folder name (then title), so this works after a local files scan too."""
+        if self.air_client is None:
+            self.warnings.append("Air status is set to come from Sonarr, but Sonarr isn't set up. Enter its "
+                                 "address and API key in Settings > Sonarr, or choose AniList in Settings > General.")
+            return
+        self.progress("Getting air status from Sonarr...", busy=True)
+        try:
+            sonarr = SonarrAirStatus.fetch(self.air_client)
+        except SonarrError as exc:
+            self.warnings.append(f"Couldn't get air status from Sonarr: {exc}")
+            return
+        updated = []
+        for index, season in enumerate(results):
+            air = sonarr.air(season.group.folder_name, season.group.show_title, season.group.season)
+            if air is not None:
+                results[index] = dataclasses.replace(season, air=air)
+                updated.append(results[index])
+        if updated:
+            self.emit("results", updated)
 
     def _add_air_status(self, results: list[ShowResult], service: LookupService | None) -> None:
         """Last step: seasons decided from your files skipped AniList, so look them up now for their air
@@ -505,5 +546,5 @@ class ScanPipeline:
                 continue
             self.stats.lookups += 1
             if lookup.match is not None:
-                results[index] = dataclasses.replace(season, match=lookup.match)
+                results[index] = dataclasses.replace(season, match=lookup.match, air=air_from_match(lookup.match))
                 self.emit("result", results[index])

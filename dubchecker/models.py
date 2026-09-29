@@ -188,6 +188,25 @@ class AniListMatch:
 
 
 @dataclass
+class AirInfo:
+    """Whether a season is still airing, from AniList or Sonarr (Settings > General > Air status)."""
+    status: str                          # RELEASING, NOT_YET_RELEASED, HIATUS, FINISHED or CANCELLED
+    next_episode: int | None = None
+    next_airing_at: int | None = None    # Unix time
+    source: str = ""                     # "AniList" or "Sonarr"
+
+    @property
+    def still_airing(self) -> bool:
+        return self.status in AIRING_STATUSES
+
+
+def air_from_match(match: AniListMatch | None) -> AirInfo | None:
+    if match is None or not match.air_status:
+        return None
+    return AirInfo(match.air_status, match.next_episode, match.next_airing_at, "AniList")
+
+
+@dataclass
 class DubInfo:
     exists: bool | None  # None = couldn't check
     sources: list[str] = field(default_factory=list)
@@ -204,6 +223,7 @@ class ShowResult:
     notes: list[str] = field(default_factory=list)
     looked_up: bool = False
     stopped: bool = False
+    air: AirInfo | None = None
 
     @property
     def key(self) -> str:

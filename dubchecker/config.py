@@ -19,6 +19,8 @@ from dubchecker import dpapi
 
 log = logging.getLogger(__name__)
 
+AIR_SOURCES = ("anilist", "sonarr", "off")
+
 
 @functools.cache
 def base_dir() -> Path:
@@ -125,7 +127,7 @@ class Config:
     sonarr_path_from: str = ""
     sonarr_path_to: str = ""
     window_geometry: str = ""
-    check_air_status: bool = True                 # also look up shows decided from your files, for air status
+    air_status_source: str = "anilist"            # where air status comes from: "anilist", "sonarr" or "off"
     hidden_tabs: list = field(default_factory=list)  # names of the group tabs you've hidden
 
     _PORTABLE_FIELDS = ("library_path", "sonarr_path_to")
@@ -154,6 +156,8 @@ class Config:
         for f in fields(cls):
             if f.name in data:
                 setattr(config, f.name, _coerce(data[f.name], getattr(config, f.name)))
+        if "air_status_source" not in data and data.get("check_air_status") is False:
+            config.air_status_source = "off"  # 2.3.0 had an on/off switch; keep it off if it was
         stored = data.get(cls._SECRET_STORED)
         if isinstance(stored, str) and stored:
             key = dpapi.decrypt(stored)
@@ -184,6 +188,8 @@ class Config:
             self.scan_source = "folder"
         if self.theme not in ("system", "light", "dark"):
             self.theme = "system"
+        if self.air_status_source not in AIR_SOURCES:
+            self.air_status_source = "anilist"
 
     def forget_unreadable_key(self) -> None:
         """The user has seen the empty key field in Settings, so an old undecryptable key can go."""

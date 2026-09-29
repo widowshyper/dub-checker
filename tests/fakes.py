@@ -64,7 +64,7 @@ def make_pipeline(data: Path, cache: Cache, prober, lookup, config: Config | Non
     def emit(kind: str, *payload) -> None:
         events.append((kind, *payload))
 
-    pipeline = ScanPipeline(config or Config(probe_workers=2, check_air_status=False), cache, overrides or Overrides(data / "overrides.json"),
+    pipeline = ScanPipeline(config or Config(probe_workers=2, air_status_source="off"), cache, overrides or Overrides(data / "overrides.json"),
                             prober, lambda: lookup, emit, cancel or threading.Event())
     return pipeline, events
 

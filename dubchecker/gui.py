@@ -563,6 +563,12 @@ class App:
             if not self.model.results:
                 self._update_empty_state([])
 
+    def settings_saved(self) -> None:
+        """Settings changed: the Sonarr summary, and whether the Airing tab and Air status column show."""
+        self.update_sonarr_summary()
+        self._layout_cards()
+        self.select_tabs(self.tabs)
+
     def update_sonarr_summary(self) -> None:
         url = self.config.sonarr_url.strip() or "not set up yet"
         key = "" if self.config.sonarr_api_key.strip() else " (no API key yet)"
@@ -637,7 +643,10 @@ class App:
             if source == "sonarr":
                 pipeline.run(sonarr=SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key))
             else:
-                pipeline.run(root=path)
+                # Air status from Sonarr works after a local files scan too, when Sonarr is set up.
+                wants_sonarr = self.config.air_status_source == "sonarr" and self.sonarr_configured
+                air_client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key) if wants_sonarr else None
+                pipeline.run(root=path, air_client=air_client)
         except Exception as exc:  # the pipeline reports its own errors; this is a last resort
             log.exception("Scan worker crashed")
             emit("done", ScanOutcome(error=f"The scan failed unexpectedly: {exc}"))
@@ -777,8 +786,14 @@ class App:
 
     # ------------------------------------------------------------ tabs
 
+    @property
+    def air_status_on(self) -> bool:
+        return self.config.air_status_source != "off"
+
     def visible_tabs(self) -> list[str]:
-        return [tab for tab in ui.TAB_IDS if tab not in self.config.hidden_tabs]
+        """Tabs not hidden by the user. The Airing tab also goes when air status is switched off."""
+        return [tab for tab in ui.TAB_IDS if tab not in self.config.hidden_tabs
+                and (tab != ui.AIRING or self.air_status_on)]
 
     def view_tabs(self) -> set[str]:
         """The selected tabs that are on show. Empty means the list shows every show."""
@@ -918,7 +933,8 @@ class App:
         self.group_description.configure(text=description)
         # The Group column is only needed when seasons from different groups are listed together.
         mixed = len(view) != 1 or ui.AIRING in view
-        tree.configure(displaycolumns=[c[0] for c in COLUMNS if mixed or c[0] != "group"])
+        tree.configure(displaycolumns=[c[0] for c in COLUMNS
+                                       if (mixed or c[0] != "group") and (self.air_status_on or c[0] != "air")])
 
         rows = self.model.rows(view, self.filter_var.get())
         rows.sort(key=lambda r: (self._sort_value(r, self.sort_column), r.title.casefold()), reverse=self.sort_desc)
@@ -1360,7 +1376,9 @@ class App:
             try:
                 service = make_online_lookup(self.ctx.cache, self.config, self.ctx.data_dir, self.closing, None)
                 new = evaluate_season(result.group, result.files, service, self.ctx.overrides.get(key),
-                                      self.config.confidence_threshold)
+                                      self.config.confidence_threshold, self.config.air_status_source)
+                if self.config.air_status_source == "sonarr":
+                    new.air = result.air  # a new AniList match doesn't change what Sonarr says
                 self.queue.put(("replace", (new,)))
             except Exception as exc:
                 log.exception("Re-check failed")

@@ -111,10 +111,18 @@ A scan runs in two phases:
 
 ## Air status
 
-Air status comes from AniList.
-- Shows that were looked up on AniList get it automatically.
-- Shows decided from your own files alone (a season with dual-audio episodes) normally skip AniList. With **Settings > General > Check air status for every show** switched on (the default), a last step called "Checking air status" looks them up too. Their group doesn't change, and seasons still missing English audio go first.
-- The first scan takes longer because AniList asks apps to pace their requests. After that, finished shows are remembered for 30 days and still-airing shows are checked again twice a day.
+Choose where air status comes from in **Settings > General > Air status**:
+
+- **From AniList** (the default):
+  - Shows that were looked up on AniList get it automatically.
+  - Shows decided from your own files alone (a season with dual-audio episodes) normally skip AniList, so a last step called "Checking air status" looks them up too. Their group doesn't change, and seasons still missing English audio go first.
+  - The first scan takes longer, because AniList asks apps to pace their requests. After that, finished shows are remembered for 30 days and still-airing shows are checked again twice a day.
+- **From Sonarr:**
+  - Dub Checker asks your Sonarr for each series' status and its calendar of upcoming episodes. That's two quick requests for the whole library, with no waiting on AniList.
+  - Shows are matched to Sonarr by folder name (then title), so this also works after a local files scan, as long as Sonarr's address and API key are set.
+  - A season with upcoming episodes is **Airing**, one whose first episode is still to come is **Not yet aired**, and one that's done is **Finished**. A show with no season information whose series continues with nothing scheduled is **On hiatus**.
+  - Shows Sonarr doesn't have get no air status.
+- **Off:** nothing extra is looked up, and the Air status column and Airing tab are hidden.
 
 ## Sonarr
 
@@ -173,7 +181,7 @@ Everything is in `UserData/` next to the program:
 | `network_workers_enabled` / `network_workers` | off / 6 | A separate number for network shares |
 | `pause_enabled` / `pause_every_files` / `pause_seconds` | off / 50 / 30 | Breaks while reading |
 | `ignore_commentary_tracks` | on | Tracks named "Commentary" don't count |
-| `check_air_status` | on | Also look up shows decided from your files, so every show gets an air status |
+| `air_status_source` | `anilist` | Where air status comes from: `anilist`, `sonarr` or `off` |
 | `hidden_tabs` | none | The tabs you've hidden |
 | `sonarr_url` / `sonarr_api_key_encrypted` | | Sonarr connection (the key is `sonarr_api_key` in plain text off Windows) |
 | `sonarr_anime_only` / `sonarr_read_unknown` | on / on | Sonarr options |

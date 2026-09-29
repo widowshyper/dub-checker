@@ -49,6 +49,8 @@ Click a tab at the top to select or deselect it; several can be selected at once
 and with none selected every show is listed. Right-click a tab (or use the Tabs
 menu) to hide tabs you don't use. The Airing tab and Air status column show
 which shows are still airing - a dub may still be on its way for those.
+Air status can come from AniList, from your Sonarr, or be switched off:
+Settings > General > Air status.
 
 Your last results are kept when you close Dub Checker and shown again the
 next time you open it.

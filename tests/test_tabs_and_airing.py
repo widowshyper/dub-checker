@@ -11,7 +11,7 @@ from dubchecker import ui_common as ui
 from dubchecker.anilist import AniListClient, to_match
 from dubchecker.cache import Cache
 from dubchecker.config import Config
-from dubchecker.models import AniListMatch, Category, FileResult, FileStatus, ShowGroup, ShowResult
+from dubchecker.models import AirInfo, AniListMatch, Category, FileResult, FileStatus, ShowGroup, ShowResult
 from tests.fakes import FakeLookup, FakeProber, make_pipeline, touch
 from tests.test_anilist import FakeResponse, FakeSession, media
 from tests.test_gui import tk_available
@@ -22,7 +22,9 @@ NOW = 1_790_000_000  # a fixed "now" for the date wording
 def season(show: str, number: int, category: Category, air: str = "", next_at: int | None = None) -> ShowResult:
     match = AniListMatch(number, show, air_status=air, next_episode=8 if next_at else None, next_airing_at=next_at)
     files = [FileResult(f"/lib/{show}/{number}.mkv", status=FileStatus.ORIGINAL_ONLY)]
-    return ShowResult(ShowGroup(f"{show}|S{number}", show, show, season=number), files, category, match=match)
+    air = AirInfo(air, match.next_episode, next_at, "AniList") if air else None
+    return ShowResult(ShowGroup(f"{show}|S{number}", show, show, season=number), files, category, match=match,
+                      air=air)
 
 
 class ModelTests(unittest.TestCase):
@@ -135,7 +137,8 @@ class PipelineAirStatusTests(unittest.TestCase):
         log: list = []
         lookup = FakeLookup(log, dub=True, air_status="RELEASING", on_lookup=on_lookup)
         pipeline, events = make_pipeline(self.data, self.cache, FakeProber(log), lookup,
-                                         config=Config(probe_workers=1, check_air_status=check), cancel=cancel)
+                                         config=Config(probe_workers=1, air_status_source="anilist" if check else "off"),
+                                         cancel=cancel)
         outcome = pipeline.run(root=str(self.lib))
         return outcome, [key for kind, key in log if kind == "lookup"], {r.key: r for r in outcome.results}
 
@@ -144,7 +147,7 @@ class PipelineAirStatusTests(unittest.TestCase):
         self.assertEqual(lookups, ["Raw Show|S1", "Half Show|S1", "Done Show|S1"])  # Needs English Audio first
         self.assertIs(results["Half Show|S1"].category, Category.NEEDS_DUB)       # group unchanged
         self.assertIs(results["Done Show|S1"].category, Category.FULLY_DUBBED)
-        self.assertTrue(all(r.match and r.match.still_airing for r in results.values()))
+        self.assertTrue(all(r.air and r.air.still_airing and r.air.source == "AniList" for r in results.values()))
         self.assertEqual(outcome.stats.lookups, 3)
         self.assertEqual(len(outcome.results), 3)
 
@@ -168,11 +171,15 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
             path.write_text(json.dumps({"hidden_tabs": ["NO_DUB", "AIRING"], "check_air_status": False}), "utf-8")
-            config = Config.load(path)
-            self.assertEqual((config.hidden_tabs, config.check_air_status), (["NO_DUB", "AIRING"], False))
+            config = Config.load(path)  # 2.3.0's switch turned off stays off
+            self.assertEqual((config.hidden_tabs, config.air_status_source), (["NO_DUB", "AIRING"], "off"))
             path.write_text(json.dumps({"hidden_tabs": "not a list"}), "utf-8")
             self.assertEqual(Config.load(path).hidden_tabs, [])
-            self.assertTrue(Config().check_air_status)
+            self.assertEqual(Config().air_status_source, "anilist")
+            path.write_text(json.dumps({"air_status_source": "sonarr"}), "utf-8")
+            self.assertEqual(Config.load(path).air_status_source, "sonarr")
+            path.write_text(json.dumps({"air_status_source": "tvdb"}), "utf-8")
+            self.assertEqual(Config.load(path).air_status_source, "anilist")
 
 
 @unittest.skipUnless(tk_available(), "no display for Tk")

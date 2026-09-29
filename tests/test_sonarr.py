@@ -18,10 +18,17 @@ from tests.fakes import FakeLookup, FakeProber, make_pipeline, touch
 
 API_KEY = "secret"
 SERIES = [
-    {"id": 1, "title": "Attack on Titan", "year": 2013, "path": "/tv/Attack on Titan (2013)", "seriesType": "anime"},
-    {"id": 2, "title": "Friends", "year": 1994, "path": "/tv/Friends", "seriesType": "standard"},
-    {"id": 3, "title": "Frieren", "year": 2023, "path": "/tv/Frieren", "seriesType": "anime"},
+    {"id": 1, "title": "Attack on Titan", "year": 2013, "path": "/tv/Attack on Titan (2013)", "seriesType": "anime",
+     "status": "continuing", "seasons": [
+         {"seasonNumber": 1, "statistics": {"previousAiring": "2013-09-28T15:00:00Z"}},
+         {"seasonNumber": 2, "statistics": {"previousAiring": "2017-06-17T15:00:00Z",
+                                            "nextAiring": "2099-01-07T15:00:00Z"}}]},
+    {"id": 2, "title": "Friends", "year": 1994, "path": "/tv/Friends", "seriesType": "standard", "status": "ended"},
+    {"id": 3, "title": "Frieren", "year": 2023, "path": "/tv/Frieren", "seriesType": "anime", "status": "ended"},
 ]
+CALENDAR = [{"seriesId": 1, "seasonNumber": 2, "episodeNumber": 9, "airDateUtc": "2099-01-07T15:00:00Z"},
+            {"seriesId": 1, "seasonNumber": 2, "episodeNumber": 10, "airDateUtc": "2099-01-14T15:00:00Z"}]
+CALENDAR_QUERIES: list[dict] = []
 FILES = {
     1: [
         {"id": 11, "path": "/tv/Attack on Titan (2013)/Season 01/AoT - S01E01.mkv", "seasonNumber": 1, "size": 100,
@@ -60,6 +67,9 @@ class MockSonarr(BaseHTTPRequestHandler):
             return self._send(200, SERIES)
         if route == "/api/v3/episodefile":
             return self._send(200, FILES.get(int(parse_qs(parsed.query)["seriesId"][0]), []))
+        if route == "/api/v3/calendar":
+            CALENDAR_QUERIES.append(parse_qs(parsed.query))
+            return self._send(200, CALENDAR)
         if route == "/api/v3/episode":
             return self._send(200, EPISODES.get(int(parse_qs(parsed.query)["seriesId"][0]), []))
         return self._send(404, {"message": "NotFound"})
@@ -163,7 +173,7 @@ class ServerTests(unittest.TestCase):
     def scan(self, **config):
         log: list = []
         prober = FakeProber(log)
-        config.setdefault("check_air_status", False)  # the air status step has its own tests
+        config.setdefault("air_status_source", "off")  # the air status steps have their own tests
         pipeline, _ = make_pipeline(self.data, self.cache, prober, FakeLookup(log), config=Config(**config))
         outcome = pipeline.run(sonarr=SonarrClient(self.url, API_KEY))
         return outcome, prober, log, {r.key: r for r in outcome.results}

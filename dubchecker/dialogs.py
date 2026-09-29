@@ -286,7 +286,7 @@ class SettingsDialog(Dialog):
         self.theme_var = tk.StringVar(value=dict(self.THEMES)[cfg.theme])
         self.threshold = tk.StringVar(value=str(cfg.confidence_threshold))
         self.expiry = tk.StringVar(value=str(cfg.cache_expiry_days))
-        self.air_status = tk.BooleanVar(value=cfg.check_air_status)
+        self.air_source = tk.StringVar(value=cfg.air_status_source)
         self.workers = tk.StringVar(value=str(cfg.probe_workers))
         self.net_enabled = tk.BooleanVar(value=cfg.network_workers_enabled)
         self.net_workers = tk.StringVar(value=str(cfg.network_workers))
@@ -366,12 +366,16 @@ class SettingsDialog(Dialog):
                       "Answers from AniList are saved and reused until then, which keeps rescans fast.")
 
         self._heading(page, "Air status")
-        ttk.Checkbutton(page, text="Check air status for every show", variable=self.air_status,
-                        style="Switch.TCheckbutton").grid(row=self._next_row(page), column=0, columnspan=2,
-                                                          sticky="w", pady=(self.px(8), 0))
-        self._hint(page, "Shows decided from your files alone are looked up on AniList too, so the Airing tab "
-                         "and Air status column cover everything. The first scan takes longer; after that "
-                         "finished shows are remembered and airing ones are refreshed twice a day.")
+        choices = ttk.Frame(page)
+        choices.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
+        for value, text in (("anilist", "From AniList"), ("sonarr", "From Sonarr"), ("off", "Off")):
+            ttk.Radiobutton(choices, text=text, value=value, variable=self.air_source).pack(
+                side="left", padx=(0, self.px(18)))
+        self.air_hint = tk.StringVar()
+        self._hint(page, "", self.air_hint)
+        for variable in (self.air_source, self.sonarr_url, self.sonarr_key):
+            variable.trace_add("write", lambda *_: self._update_air_hint())
+        self._update_air_hint()
 
         self._heading(page, "Saved information")
         clear_row = ttk.Frame(page)
@@ -460,6 +464,22 @@ class SettingsDialog(Dialog):
         self.pause_files_spin.state(state)
         self.pause_seconds_spin.state(state)
 
+    def _update_air_hint(self) -> None:
+        source = self.air_source.get()
+        if source == "sonarr":
+            text = ("Asks your Sonarr for each show's status and upcoming episodes: two quick requests, no waiting "
+                    "on AniList. Shows Sonarr doesn't have get no air status. They're matched by folder name, so "
+                    "this works for local files scans too.")
+            if not (self.sonarr_url.get().strip() and self.sonarr_key.get().strip()):
+                text += " Enter Sonarr's address and API key in the Sonarr tab first."
+        elif source == "off":
+            text = "No air status: nothing extra is looked up, and the Air status column and Airing tab are hidden."
+        else:
+            text = ("Shows decided from your files alone are looked up on AniList too, so every show gets an air "
+                    "status. The first scan takes longer, because AniList limits how fast apps can ask; after that, "
+                    "finished shows are remembered and airing ones are checked again twice a day.")
+        self.air_hint.set(text)
+
     def _update_pause_hint(self) -> None:
         try:
             files, seconds = int(self.pause_files.get()), int(self.pause_seconds.get())
@@ -544,7 +564,7 @@ class SettingsDialog(Dialog):
         cfg.theme = next(value for value, name in self.THEMES if name == self.theme_var.get())
         cfg.confidence_threshold = threshold
         cfg.cache_expiry_days = expiry
-        cfg.check_air_status = self.air_status.get()
+        cfg.air_status_source = self.air_source.get()
         cfg.probe_workers = workers
         cfg.network_workers_enabled = self.net_enabled.get()
         cfg.network_workers = net_workers
@@ -562,4 +582,4 @@ class SettingsDialog(Dialog):
         self.close()
         if cfg.theme != old_theme:
             self.app.set_theme(cfg.theme)
-        self.app.update_sonarr_summary()
+        self.app.settings_saved()

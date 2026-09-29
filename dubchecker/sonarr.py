@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from dubchecker.models import AirInfo
 
 
 class SonarrError(Exception):
@@ -17,6 +21,8 @@ class SonarrSeries:
     year: int | None
     path: str
     series_type: str
+    status: str = ""                                   # continuing, ended, upcoming or deleted
+    seasons: list = field(default_factory=list)        # Sonarr's season list, with per-season statistics
 
 
 def normalise_url(url: str) -> str:
@@ -116,8 +122,13 @@ class SonarrClient:
 
     def series(self) -> list[SonarrSeries]:
         return [SonarrSeries(id=int(s["id"]), title=str(s.get("title") or ""), year=s.get("year") or None,
-                             path=str(s.get("path") or ""), series_type=str(s.get("seriesType") or "").lower())
+                             path=str(s.get("path") or ""), series_type=str(s.get("seriesType") or "").lower(),
+                             status=str(s.get("status") or "").lower(), seasons=list(s.get("seasons") or []))
                 for s in self._get("/api/v3/series") or [] if "id" in s]
+
+    def calendar(self, start: str, end: str) -> list[dict]:
+        """Episodes airing between two ISO dates, including unmonitored ones."""
+        return list(self._get("/api/v3/calendar", {"start": start, "end": end, "unmonitored": "true"}) or [])
 
     def episode_files(self, series_id: int) -> list[dict]:
         return list(self._get("/api/v3/episodefile", {"seriesId": series_id}) or [])
@@ -173,6 +184,70 @@ def search_for_replacements(client: SonarrClient, folder_name: str, title: str, 
         return f"Sonarr is searching for new releases of {series.title} ({names})."
     client.command("SeriesSearch", seriesId=series.id)
     return f"Sonarr is searching for new releases of {series.title}."
+
+
+def _timestamp(text: object) -> int | None:
+    """Sonarr's '2026-10-03T15:30:00Z' as Unix time."""
+    if not text:
+        return None
+    try:
+        return int(datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+class SonarrAirStatus:
+    """Air status from Sonarr (Settings > General > Air status > Sonarr): each series' status plus the
+    calendar's upcoming episodes. Two requests in total, whatever the size of the library."""
+
+    CALENDAR_DAYS = 120
+
+    def __init__(self, series: list[SonarrSeries], upcoming: list[dict]) -> None:
+        self.by_folder = {last_path_part(s.path).casefold(): s for s in series}
+        self.by_title = {_plain_title(s.title): s for s in series}
+        self.next: dict[tuple[int, int], tuple[int | None, int]] = {}  # (series, season) -> (episode, airs at)
+        for episode in upcoming:
+            when = _timestamp(episode.get("airDateUtc"))
+            if when is None or episode.get("seriesId") is None:
+                continue
+            key = (int(episode["seriesId"]), int(episode.get("seasonNumber") or 0))
+            if key not in self.next or when < self.next[key][1]:
+                self.next[key] = (episode.get("episodeNumber"), when)
+
+    @classmethod
+    def fetch(cls, client: SonarrClient, now: float | None = None) -> SonarrAirStatus:
+        start = datetime.fromtimestamp(time.time() if now is None else now, timezone.utc)
+        end = start + timedelta(days=cls.CALENDAR_DAYS)
+        iso = "%Y-%m-%dT%H:%M:%SZ"
+        return cls(client.series(), client.calendar(start.strftime(iso), end.strftime(iso)))
+
+    def find(self, folder_name: str, title: str) -> SonarrSeries | None:
+        """Matched the same way as the replacement search: by folder name, then by title."""
+        return self.by_folder.get(folder_name.casefold()) or self.by_title.get(_plain_title(title))
+
+    def air(self, folder_name: str, title: str, season: int | None) -> AirInfo | None:
+        series = self.find(folder_name, title)
+        if series is None:
+            return None
+        if season is None:  # no season information: go by the whole series
+            upcoming = [value for (sid, _), value in self.next.items() if sid == series.id]
+            coming = min(upcoming, key=lambda value: value[1]) if upcoming else None
+            stats = None
+        else:
+            coming = self.next.get((series.id, season))
+            stats = next((s.get("statistics") or {} for s in series.seasons if s.get("seasonNumber") == season), None)
+            if coming is None and stats and _timestamp(stats.get("nextAiring")):
+                coming = (None, _timestamp(stats.get("nextAiring")))  # further ahead than the calendar looks
+        started = bool(stats.get("previousAiring")) if stats is not None else True
+        if series.status == "upcoming" or (coming and not started):
+            status = "NOT_YET_RELEASED"
+        elif coming:
+            status = "RELEASING"
+        elif series.status == "continuing" and season is None:
+            status = "HIATUS"  # the show goes on, but nothing is scheduled yet
+        else:
+            status = "FINISHED"  # this season is done (or the whole series has ended)
+        return AirInfo(status, coming[0] if coming else None, coming[1] if coming else None, "Sonarr")
 
 
 def connection_summary(client: SonarrClient) -> str:

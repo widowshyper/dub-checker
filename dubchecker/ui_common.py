@@ -53,8 +53,8 @@ TABS: dict[str, GroupInfo] = {
     **{c.name: info for c, info in GROUPS.items()},
     AIRING: GroupInfo(
         "Airing", "Still airing or not out yet, so an English dub may still be on its way.",
-        "purple", "Nothing airing - or air status hasn't been checked yet. Switch it on in Settings > General "
-                  "and scan again."),
+        "purple", "Nothing airing - or air status hasn't been checked yet. Scan again, or choose where it comes "
+                  "from in Settings > General > Air status."),
 }
 
 AIR_LABELS = {"RELEASING": "Airing", "NOT_YET_RELEASED": "Not yet aired", "HIATUS": "On hiatus",
@@ -157,34 +157,34 @@ def in_tabs(r: ShowResult, tabs: set[str]) -> bool:
     """Whether a season is listed when these tabs are selected. No tabs selected lists everything."""
     if not tabs:
         return True
-    return r.category.name in tabs or (AIRING in tabs and r.match is not None and r.match.still_airing)
+    return r.category.name in tabs or (AIRING in tabs and r.air is not None and r.air.still_airing)
 
 
 def air_status_text(r: ShowResult, now: float | None = None) -> str:
     """e.g. 'Airing - ep 8 on 3 Oct', 'Finished', or '-' when it hasn't been checked."""
-    match = r.match
-    if match is None or not match.air_status:
+    air = r.air
+    if air is None or not air.status:
         return "-"
-    label = AIR_LABELS.get(match.air_status, match.air_status.title())
-    if match.next_episode and match.next_airing_at:
-        when = time.localtime(match.next_airing_at)
+    label = AIR_LABELS.get(air.status, air.status.title())
+    if air.next_airing_at:
+        when = time.localtime(air.next_airing_at)
         date = f"{when.tm_mday} {time.strftime('%b', when)}"
-        verb = "on" if match.next_airing_at > (time.time() if now is None else now) else "aired"
-        return f"{label} - ep {match.next_episode} {verb} {date}"
+        verb = "on" if air.next_airing_at > (time.time() if now is None else now) else "aired"
+        episode = f"ep {air.next_episode} " if air.next_episode else "next episode "
+        return f"{label} - {episode}{verb} {date}"
     return label
 
 
 def air_sort_key(r: ShowResult) -> tuple:
     """Airing shows first, soonest next episode first; unchecked last."""
-    match = r.match
-    status = match.air_status if match else ""
-    return (_AIR_ORDER.get(status, 9), (match.next_airing_at or 0) if match else 0)
+    air = r.air
+    return (_AIR_ORDER.get(air.status if air else "", 9), (air.next_airing_at or 0) if air else 0)
 
 
 def show_air_status(seasons: list[ShowResult]) -> ShowResult | None:
     """The season whose air status speaks for the show: one still airing, else the latest checked one."""
-    checked = [s for s in seasons if s.match and s.match.air_status]
-    airing = [s for s in checked if s.match.still_airing]  # type: ignore[union-attr]
+    checked = [s for s in seasons if s.air and s.air.status]
+    airing = [s for s in checked if s.air.still_airing]  # type: ignore[union-attr]
     return (airing or checked or [None])[-1]
 
 
