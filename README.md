@@ -1,7 +1,15 @@
 # Dub Checker
 
+> [!IMPORTANT]
+> **All of the code in this repository is 100% AI-generated.** It was written by an AI assistant from
+> plain-English requirements, and has been tested but not written or line-by-line reviewed by a person.
+
 Dub Checker scans your anime library (a folder, or a Sonarr server) and tells you
 which shows are missing English dub audio, and whether an English dub exists at all.
+
+**[Download the portable Windows app](../../releases/latest)**: unzip it and run `DubChecker.exe`. Nothing to install.
+
+![Dub Checker's main window: four summary cards, and a table of shows with coloured audio bars and episodes opened out](docs/screenshots/main.png)
 
 Each season lands in one of four groups:
 
@@ -12,11 +20,21 @@ Each season lands in one of four groups:
 | **Fully Dubbed** | Every episode already has English audio. |
 | **Check Manually** | Dub Checker couldn't be sure. The Notes column says why (no AniList match, a low-confidence match, audio without a language label, a file that couldn't be read, or the dub couldn't be checked). |
 
+## Screenshots
+
+| Dark mode | The episode window |
+|---|---|
+| ![The main window in dark mode](docs/screenshots/main_dark.png) | ![The episode window for a Chinese show: each file coloured by its audio, with every audio track listed](docs/screenshots/episodes.png) |
+
+| Settings: hard drive care |
+|---|
+| ![The Settings window on the Hard drive care tab](docs/screenshots/settings.png) |
+
 ## Quick start
 
 ### Portable app (Windows, nothing to install)
 
-1. Unzip `Dub Checker.zip` anywhere you can write to, such as Documents or a USB stick. Don't use Program Files.
+1. Download the zip from the [latest release](../../releases/latest). Unzip it anywhere you can write to, such as Documents or a USB stick. Don't use Program Files.
 2. Double-click `DubChecker.exe`.
 3. If SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**. It appears because the exe isn't code-signed.
 
