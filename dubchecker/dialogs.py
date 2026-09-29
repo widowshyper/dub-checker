@@ -1,10 +1,11 @@
-"""Episode details, Fix match and Settings windows."""
+"""Episode details, Dismissed shows, Fix match and Settings windows."""
 from __future__ import annotations
 
 import logging
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox, ttk
@@ -193,6 +194,80 @@ class EpisodeDetailsDialog(Dialog):
         key = self.result.key
         self.close()
         self.app.fix_match(key)
+
+
+# ---------------------------------------------------------------- dismissed shows
+
+class DismissedDialog(Dialog):
+    """The shows you've dismissed, with a way to bring them back."""
+
+    COLUMNS = (("show", "Show", 300), ("where", "In your last scan", 300), ("when", "Dismissed on", 140))
+
+    def __init__(self, app: App) -> None:
+        super().__init__(app, f"Dismissed shows - {APP_NAME}")
+        frame = ttk.Frame(self, padding=self.px(18))
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+        ttk.Label(frame, text="Dismissed shows", style="Subtitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, style="Muted.TLabel", wraplength=self.px(700),
+                  text="These are hidden from every tab and the list, and stay hidden after a rescan. Select one or "
+                       "more and click Bring back to list them again.").grid(
+            row=1, column=0, sticky="w", pady=(self.px(4), self.px(12)))
+
+        table = ttk.Frame(frame)
+        table.grid(row=2, column=0, sticky="nsew")
+        table.columnconfigure(0, weight=1)
+        table.rowconfigure(0, weight=1)
+        self.tree = ttk.Treeview(table, columns=[c[0] for c in self.COLUMNS], show="headings", selectmode="extended")
+        for column, heading, width in self.COLUMNS:
+            self.tree.heading(column, text=heading, anchor="w")
+            self.tree.column(column, width=self.px(width), stretch=column != "when", anchor="w")
+        scrollbar = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_buttons())
+        self.tree.bind("<Double-Button-1>", lambda _e: self._restore(list(self.tree.selection())))
+        self.empty = ttk.Label(table, text="No shows are dismissed. Right-click a show in the list and choose "
+                                           "Dismiss this show to hide it.", style="Muted.TLabel")
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=3, column=0, sticky="e", pady=(self.px(12), 0))
+        self.restore_button = ttk.Button(buttons, text="Bring back selected",
+                                         command=lambda: self._restore(list(self.tree.selection())))
+        self.restore_button.pack(side="left")
+        self.restore_all_button = ttk.Button(buttons, text="Bring back all",
+                                             command=lambda: self._restore(list(self.tree.get_children())))
+        self.restore_all_button.pack(side="left", padx=(self.px(8), 0))
+        ttk.Button(buttons, text="Close", style="Accent.TButton", command=self.close).pack(
+            side="left", padx=(self.px(8), 0))
+        self._fill()
+        self.present(820, 520)
+
+    def _fill(self) -> None:
+        self.tree.delete(*self.tree.get_children())
+        shows = self.app.model.by_show()
+        for folder, info in self.app.ctx.dismissed.items():
+            seasons = shows.get(folder, [])
+            groups = list(dict.fromkeys(s.category.value for s in seasons))
+            where = ", ".join(groups) if groups else "Not in the current results"
+            when = time.strftime("%d %b %Y", time.localtime(info["dismissed_at"])) if info["dismissed_at"] else ""
+            self.tree.insert("", "end", iid=folder, values=(info["title"], where, when))
+        if self.tree.get_children():
+            self.empty.place_forget()
+        else:
+            self.empty.place(relx=0.5, rely=0.5, anchor="center")
+        self._update_buttons()
+
+    def _update_buttons(self) -> None:
+        self.restore_button.state(("!disabled",) if self.tree.selection() else ("disabled",))
+        self.restore_all_button.state(("!disabled",) if self.tree.get_children() else ("disabled",))
+
+    def _restore(self, folders: list[str]) -> None:
+        if folders:
+            self.app.restore_shows(folders)
+            self._fill()
 
 
 

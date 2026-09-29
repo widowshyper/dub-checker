@@ -31,7 +31,11 @@ from dubchecker.sonarr import (SonarrAirStatus, SonarrClient, SonarrError, last_
 
 log = logging.getLogger(__name__)
 
-Emit = Callable[..., None]  # emit(kind, *payload); kinds: progress, results, result, done
+Emit = Callable[..., None]  # emit(kind, *payload); kinds: phase, progress, results, result, done
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n:,} {word}" if n == 1 else f"{n:,} {word}s"
 
 
 class Prober(Protocol):
@@ -62,12 +66,14 @@ class ScanStats:
     def short_text(self) -> str:
         parts = []
         if self.from_sonarr:
-            parts.append(f"{self.from_sonarr:,} from Sonarr")
-        parts.append(f"{self.read:,} read from disk")
+            parts.append(f"{plural(self.from_sonarr, 'file')} labelled by Sonarr")
+        parts.append(f"{plural(self.read, 'file')} read from disk")
         if self.cached:
-            parts.append(f"{self.cached:,} already known")
+            parts.append(f"{self.cached:,} already read in an earlier scan")
         if self.failed:
             parts.append(f"{self.failed:,} couldn't be read")
+        if self.lookups:
+            parts.append(f"{plural(self.lookups, 'season')} looked up online")
         return "(" + ", ".join(parts) + ")"
 
     def log_line(self, elapsed: float) -> str:
@@ -223,6 +229,11 @@ class ScanPipeline:
     def progress(self, text: str, fraction: float | None = None, busy: bool = False) -> None:
         self.emit("progress", text, fraction, busy)
 
+    def phase(self, number: int, title: str, explanation: str) -> None:
+        """Say which step the scan is on, in words: shown above the progress bar."""
+        steps = 2 if self.config.air_status_source == "off" else 3
+        self.emit("phase", f"Step {number} of {steps}: {title}", explanation)
+
     def _check_cancel(self) -> None:
         if self.cancel.is_set():
             raise Cancelled()
@@ -271,14 +282,17 @@ class ScanPipeline:
     def _collect_folder(self, root: str) -> list[SeasonFiles]:
         self.stats.network = is_network_path(root)
         lister = FolderLister()
-        self.progress("Looking through your library...", busy=True)
+        self.phase(1, "Reading your episode files",
+                   "Finding every episode in your library and reading which audio languages each file has. "
+                   "Files already read in an earlier scan are skipped, so rescans are quick.")
+        self.progress("Looking for show folders in your library...", busy=True)
         show_groups: list[tuple[str, list[ShowGroup]]] = []
         by_key: dict[str, ShowGroup] = {}
         try:
             shows = list_library(root, lister)
             for number, show in enumerate(shows, 1):
                 self._check_cancel()
-                self.progress(f"Listing folders: show {number} of {len(shows)} ({show.name})", busy=True)
+                self.progress(f"Finding episode files: show {number} of {len(shows)} - {show.name}", busy=True)
                 try:
                     groups = group_show(show, lister)
                 except OSError as exc:
@@ -313,7 +327,11 @@ class ScanPipeline:
 
     def _collect_sonarr(self, client: SonarrClient) -> list[SeasonFiles]:
         cfg = self.config
-        self.progress("Connecting to Sonarr...", busy=True)
+        self.phase(1, "Getting your shows from Sonarr",
+                   "Sonarr already knows the audio languages of most files, so this is quick. "
+                   + ("Files Sonarr couldn't label are read by Dub Checker itself."
+                      if cfg.sonarr_read_unknown else "Files Sonarr couldn't label go to Check Manually."))
+        self.progress("Connecting to Sonarr and getting your series list...", busy=True)
         series = client.series()
         if cfg.sonarr_anime_only:
             series = [s for s in series if s.series_type == "anime"]
@@ -325,7 +343,7 @@ class ScanPipeline:
         unreachable, example = 0, ""
         for number, s in enumerate(series, 1):
             self._check_cancel()
-            self.progress(f"Asking Sonarr about your shows: {number} of {len(series)} ({s.title})",
+            self.progress(f"Getting episode files from Sonarr: series {number} of {len(series)} - {s.title}",
                           (number - 1) / max(1, len(series)))
             folder = last_path_part(s.path) or s.title
             local_series_path = map_path(s.path, cfg.sonarr_path_from, cfg.sonarr_path_to)
@@ -381,7 +399,7 @@ class ScanPipeline:
         results: dict[str, FileResult] = {}
         if not jobs:
             return results
-        self.progress("Checking which files are already known...", busy=True)
+        self.progress("Checking which files were already read in an earlier scan...", busy=True)
         keys = [self._key(j.file.path) for j in jobs]
         cached = self.cache.get_files({key: (j.file.size, j.file.mtime) for key, j in zip(keys, jobs)})
         misses = []
@@ -399,7 +417,7 @@ class ScanPipeline:
 
         total, done = len(jobs), len(results)
         self.stats.workers = self._workers()
-        self.progress(f"Reading audio tracks: file {done:,} of {total:,}", done / total)
+        self.progress(f"Reading audio languages: file {done:,} of {total:,}", done / total)
         throttle = ReadThrottle(self.config.pause_enabled, self.config.pause_every_files, self.config.pause_seconds,
                                 self.cancel, self._on_break)
         writer = FileCacheWriter(self.cache)
@@ -415,8 +433,8 @@ class ScanPipeline:
                     self.stopped = True
                     continue
                 done += 1
-                self.progress(f"Reading audio tracks: file {done:,} of {total:,} "
-                              f"(Show {job.show_index} of {show_count}: {job.show_title})", done / total)
+                self.progress(f"Reading audio languages: file {done:,} of {total:,} "
+                              f"(show {job.show_index} of {show_count} - {job.show_title})", done / total)
         finally:
             pool.shutdown(wait=True, cancel_futures=True)
             writer.flush()  # also when stopped
@@ -444,7 +462,8 @@ class ScanPipeline:
         return build_file_result(f.path, f.size, f.mtime, raw, self.config.ignore_commentary_tracks, "disk")
 
     def _on_break(self, seconds_left: float) -> None:
-        self.progress(f"Giving the drive a break - reading continues in {math.ceil(seconds_left)} s")
+        self.progress(f"Giving the drive a break (Settings > Hard drive care) - reading continues in "
+                      f"{math.ceil(seconds_left)} s")
 
     # ------------------------------------------------------------ phase 2
 
@@ -472,6 +491,15 @@ class ScanPipeline:
 
         service: LookupService | None = None
         started = time.monotonic()
+        if pending:
+            decided = len(immediate)
+            self.phase(2, "Checking online whether English dubs exist",
+                       f"{plural(len(pending), 'season')} {'has' if len(pending) == 1 else 'have'} no English audio "
+                       "in your files, so each is looked up on AniList (its English voice cast) and in the MAL-Dubs "
+                       "list. " + (f"The other {plural(decided, 'season')} already have dual-audio files, so they "
+                                   "skip this. " if decided else "")
+                       + "AniList allows about 28 requests a minute, so a first scan can take a while; answers are "
+                         "saved, so the next scan is quicker.")
         try:
             for number, s in enumerate(pending):
                 if self.cancel.is_set():
@@ -479,10 +507,11 @@ class ScanPipeline:
                     break
                 try:
                     if service is None:
-                        self.progress("Getting the list of dubbed shows...", busy=True)
+                        self.progress("Downloading the MAL-Dubs list of dubbed anime (refreshed once a week)...",
+                                      busy=True)
                         service = self.lookup_factory()
-                    self.progress(f"Checking AniList: show {number + 1} of {len(pending)} ({s.group.display_title})",
-                                  number / len(pending))
+                    self.progress(f"Looking up on AniList: season {number + 1} of {len(pending)} - "
+                                  f"{s.group.display_title}", number / len(pending))
                     result = evaluate_season(s.group, s.files, service, self.overrides.get(s.group.key),
                                              self.config.confidence_threshold, self.config.air_status_source)
                 except Cancelled:
@@ -506,7 +535,10 @@ class ScanPipeline:
             self.warnings.append("Air status is set to come from Sonarr, but Sonarr isn't set up. Enter its "
                                  "address and API key in Settings > Sonarr, or choose AniList in Settings > General.")
             return
-        self.progress("Getting air status from Sonarr...", busy=True)
+        self.phase(3, "Checking which shows are still airing (from Sonarr)",
+                   "For the Airing tab and the Air status column. Sonarr is asked for its series list and its "
+                   "calendar of upcoming episodes - two quick requests. Groups don't change.")
+        self.progress("Asking Sonarr for its series list and upcoming episodes...", busy=True)
         try:
             sonarr = SonarrAirStatus.fetch(self.air_client)
         except SonarrError as exc:
@@ -526,6 +558,12 @@ class ScanPipeline:
         status. Their group doesn't change. Seasons still missing English audio go first."""
         todo = [i for i, r in enumerate(results) if r.match is None and not r.looked_up and not r.stopped]
         todo.sort(key=lambda i: results[i].category is not Category.NEEDS_DUB)
+        if todo:
+            verb = "is" if len(todo) == 1 else "are"
+            self.phase(3, "Checking which shows are still airing (from AniList)",
+                       f"For the Airing tab and the Air status column: {plural(len(todo), 'season')} decided from "
+                       f"your files alone {verb} looked up now. Groups don't change. To make this quicker, get air "
+                       "status from Sonarr or turn it off in Settings > General.")
         for number, index in enumerate(todo):
             if self.cancel.is_set():
                 self.stopped = True
@@ -533,10 +571,10 @@ class ScanPipeline:
             season = results[index]
             try:
                 if service is None:
-                    self.progress("Getting ready to check air status...", busy=True)
+                    self.progress("Connecting to AniList...", busy=True)
                     service = self.lookup_factory()
-                self.progress(f"Checking air status: show {number + 1} of {len(todo)} ({season.group.display_title})",
-                              number / len(todo))
+                self.progress(f"Asking AniList if it's still airing: season {number + 1} of {len(todo)} - "
+                              f"{season.group.display_title}", number / len(todo))
                 lookup = service.lookup(season.group)
             except Cancelled:
                 self.stopped = True

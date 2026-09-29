@@ -20,6 +20,8 @@ from dubchecker import dpapi
 log = logging.getLogger(__name__)
 
 AIR_SOURCES = ("anilist", "sonarr", "off")
+# The Air status drop-down above the list: "all", an AniList status, or "NONE" (not checked).
+AIR_FILTERS = ("all", "RELEASING", "NOT_YET_RELEASED", "HIATUS", "FINISHED", "CANCELLED", "NONE")
 
 
 @functools.cache
@@ -129,6 +131,8 @@ class Config:
     window_geometry: str = ""
     air_status_source: str = "anilist"            # where air status comes from: "anilist", "sonarr" or "off"
     hidden_tabs: list = field(default_factory=list)  # names of the group tabs you've hidden
+    tab_order: list = field(default_factory=list)    # the tabs in the order you've dragged them into
+    air_filter: str = "all"                          # the Air status drop-down above the list (AIR_FILTERS)
 
     _PORTABLE_FIELDS = ("library_path", "sonarr_path_to")
     # The API key is plain text in memory but written to the file encrypted (see dpapi.py).
@@ -190,6 +194,8 @@ class Config:
             self.theme = "system"
         if self.air_status_source not in AIR_SOURCES:
             self.air_status_source = "anilist"
+        if self.air_filter not in AIR_FILTERS:
+            self.air_filter = "all"
 
     def forget_unreadable_key(self) -> None:
         """The user has seen the empty key field in Settings, so an old undecryptable key can go."""
@@ -251,3 +257,50 @@ class Overrides:
     def __len__(self) -> int:
         with self._lock:
             return len(self._data)
+
+
+class Dismissed:
+    """Shows the user has dismissed: show folder name -> {"title", "dismissed_at"}.
+
+    Keyed by folder name like the results, so a show stays dismissed across rescans,
+    and a Local files scan and a Sonarr scan of the same library agree.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._data: dict[str, dict] = {}
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8-sig"))
+                self._data = {str(k): {"title": str(v.get("title") or k),
+                                       "dismissed_at": float(v.get("dismissed_at") or 0)}
+                              for k, v in raw.items() if isinstance(v, dict)}
+            except (OSError, ValueError, TypeError, AttributeError) as exc:
+                log.warning("Couldn't read %s (%s) - starting with no dismissed shows", path, exc)
+
+    def _save(self) -> None:
+        try:
+            write_json(self._path, self._data)
+        except OSError as exc:
+            log.warning("Couldn't save %s: %s", self._path, exc)
+
+    def add(self, folder: str, title: str, when: float) -> None:
+        self._data[folder] = {"title": title, "dismissed_at": when}
+        self._save()
+
+    def remove(self, folders: list[str]) -> None:
+        if any(self._data.pop(folder, None) is not None for folder in list(folders)):
+            self._save()
+
+    def items(self) -> list[tuple[str, dict]]:
+        """(folder, info) newest first."""
+        return sorted(self._data.items(), key=lambda kv: -kv[1]["dismissed_at"])
+
+    def keys(self) -> frozenset[str]:
+        return frozenset(self._data)
+
+    def __contains__(self, folder: object) -> bool:
+        return folder in self._data
+
+    def __len__(self) -> int:
+        return len(self._data)

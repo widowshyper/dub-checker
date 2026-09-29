@@ -46,11 +46,17 @@ Sonarr only swaps a file for a release it rates higher, so give dual-audio
 releases a higher score with a custom format in Sonarr.
 
 Click a tab at the top to select or deselect it; several can be selected at once,
-and with none selected every show is listed. Right-click a tab (or use the Tabs
-menu) to hide tabs you don't use. The Airing tab and Air status column show
-which shows are still airing - a dub may still be on its way for those.
+and with none selected every show is listed. Drag a tab left or right to move
+it. Untick a tab in the "Show tabs" row to hide it, and tick it to bring it
+back. The Airing tab and Air status column show which shows are still airing -
+a dub may still be on its way for those. The Air status drop-down above the
+list narrows it to shows that are airing, finished and so on.
 Air status can come from AniList, from your Sonarr, or be switched off:
 Settings > General > Air status.
+
+Don't care about a show? Right-click it and choose "Dismiss this show". It's
+hidden from every tab, even after a rescan. "Dismissed shows" above the list
+brings it back.
 
 Your last results are kept when you close Dub Checker and shown again the
 next time you open it.
@@ -59,7 +65,8 @@ next time you open it.
 MOVING TO ANOTHER PC OR A USB STICK
 -----------------------------------
 Copy the whole "Dub Checker" folder, including the UserData folder inside it.
-Your settings, saved scan results and manual matches come with it. If your
+Your settings, saved scan results, manual matches and dismissed shows come
+with it. If your
 anime folder is on the same drive as Dub Checker, it is found again even if
 the drive letter changes (e.g. E: becomes F:).
 
@@ -79,6 +86,7 @@ STARTING OVER
 Close Dub Checker, then delete things from the UserData folder:
   config.json      your settings (includes your Sonarr API key, encrypted)
   overrides.json   your manual AniList matches
+  dismissed.json   the shows you've dismissed
   cache.db         what Dub Checker remembers about your files and AniList
   last_scan.json   the results of your last scan
   dubInfo.json     the saved copy of the MAL-Dubs list

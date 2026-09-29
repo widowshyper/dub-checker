@@ -108,6 +108,8 @@ def apply_theme(root: tk.Tk, setting: str) -> dict[str, str]:
     style.configure("Card.TLabel", foreground=palette["fg"])
     style.configure("Muted.TLabel", foreground=palette["muted"])
     style.configure("Card.Muted.TLabel", background=palette["card"], foreground=palette["muted"])
+    style.configure("Card.Strong.TLabel", background=palette["card"], foreground=palette["fg"],
+                    font="SunValleyBodyStrongFont")
     style.configure("Title.TLabel", font="SunValleyTitleFont")
     style.configure("Subtitle.TLabel", font="SunValleySubtitleFont")
     style.configure("Strong.TLabel", font="SunValleyBodyStrongFont")

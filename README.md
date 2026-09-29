@@ -67,19 +67,21 @@ If your anime folder is on the same drive as Dub Checker, its path is saved with
 1. Choose **Scan from: Local files** and pick your library folder, or choose **Sonarr** (see below).
 2. Click **Scan library** (or press **F5**). **Stop** (or **Esc**) keeps everything finished so far.
 
-A scan runs in two phases:
+While it scans, the panel shows which step it's on (for example "Step 2 of 3: Checking online whether English dubs exist") with a line explaining what that step does, then the progress of the step itself:
 
-1. **Reading audio tracks.** Every episode file is read first, for example "Reading audio tracks: file 132 of 840 (Show 12 of 60: Title)". Files that are already known and unchanged come from the cache instantly.
-2. **Checking AniList only where needed.** Files are grouped into seasons.
+1. **Reading your episode files.** Every episode file is read first, for example "Reading audio languages: file 132 of 840 (show 12 of 60 - Title)". Files already read in an earlier scan, and unchanged since, come from the cache instantly.
+2. **Checking online whether English dubs exist.** Files are grouped into seasons.
    - A season with at least one dual-audio file (original language + English) has already proven a dub exists. It is decided from your files alone and appears in the table straight away, with "Dub confirmed by: Your files".
-   - Every other season is looked up on AniList and appears as soon as its lookup finishes.
+   - Every other season is looked up on AniList and in the MAL-Dubs list, and appears as soon as its lookup finishes.
    - Each season is decided on its own, so Season 2 is never treated as dubbed just because Season 1 is.
+3. **Checking which shows are still airing**, from AniList or Sonarr (see [Air status](#air-status)). This step is skipped when air status is off.
 
 **The results table**
 
 - **The cards at the top are the tabs.** They count shows, not seasons.
   - Click a tab to select it and click it again to deselect it. Several can be selected at once, and their shows are listed together with a **Group** column saying where each season is. With none selected, every show is listed.
-  - Tabs you don't use can be hidden: right-click one and choose **Hide this tab**, or untick it in the **Tabs** menu above the list. Hidden tabs stay hidden after a restart, and **Show all tabs** brings them back.
+  - **Move a tab** by dragging it left or right, or right-click it and choose **Move left** or **Move right**. The order is remembered.
+  - **Hide a tab** by unticking it in the **Show tabs** row above the tabs, or right-click it and choose **Hide this tab**. Tick it again to bring it back. Hidden tabs stay hidden after a restart.
 - **Airing tab and Air status column:** these show whether a show is still airing, not out yet, on hiatus, finished or cancelled, with the next episode's date while it airs (for example "Airing - ep 8 on 3 Oct"). The Airing tab lists shows that are still airing or not out yet, where an English dub may still be on its way. It cuts across the other groups. Click the **Air status** header to sort airing shows first.
 - A show with several seasons is a bold row. **To open or close a show or a season**, you can:
   - click its ► arrow, or anywhere on its coloured audio bar;
@@ -105,7 +107,10 @@ A scan runs in two phases:
   - **Open file location** (after a Local files scan) opens the season's folder in Explorer with its first episode selected; on a show row it opens the show's folder. In the episode window, right-click a file to open its location.
   - **Search for replacements in Sonarr...** (when Sonarr is set up) asks Sonarr to look for new releases of the episodes that only have the original-language audio. On an episode row it searches for just that episode. See [Sonarr](#sonarr).
   - **Search Nyaa for "... dual audio"** opens [nyaa.si](https://nyaa.si/) in your web browser, searching the Anime category for the show's name plus "dual audio", most seeders first. If AniList knows the show by another name (such as its romaji title, which many releases use), that search is offered too. The episode window has the same search as a button. Dub Checker only opens the search page; it doesn't download anything.
-- **Filter** (Ctrl+F) narrows the list; Esc clears it. **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group and air status.
+- **Search** (Ctrl+F) narrows the list by name; Esc clears it.
+- **Air status** (the drop-down next to Search) lists only seasons that are Airing, Not yet aired, On hiatus, Finished, Cancelled or Not checked. It's hidden when air status is off.
+- **Dismissing a show:** right-click it and choose **Dismiss this show**. It's hidden from every tab, the counts and exports, and stays hidden after a rescan. **Dismissed shows** above the list shows what you've dismissed and brings shows back.
+- **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group and air status.
 - **Your results are kept.** When you close Dub Checker and open it again, the last scan is back, with the same tab and open shows, and the status line says when it was made. A scan that was stopped, or still running when you closed the window, keeps the part that was finished.
 - **Clear results** empties the table, resets the window and forgets the saved list, so it doesn't come back next time. Your settings, manual matches, and what Dub Checker knows about your files and AniList are kept, so the next scan is quick. To forget saved AniList answers, use **Settings > General > Clear saved online info**.
 
@@ -163,6 +168,7 @@ Everything is in `UserData/` next to the program:
 |---|---|
 | `config.json` | Settings (see below), including the Sonarr API key, encrypted on Windows. Rewritten on start so new settings appear; unknown keys are ignored. |
 | `overrides.json` | Your manual AniList matches: season key → AniList ID. |
+| `dismissed.json` | The shows you've dismissed (by folder name), with when. |
 | `cache.db` | SQLite: audio tracks of every file read (keyed by path, size and date) and AniList answers. |
 | `last_scan.json` | The results of your last scan, shown again when Dub Checker starts. Deleted by Clear results. |
 | `dubInfo.json` | Saved copy of the [MAL-Dubs](https://github.com/MAL-Dubs/MAL-Dubs) list, refreshed weekly. |
@@ -183,6 +189,8 @@ Everything is in `UserData/` next to the program:
 | `ignore_commentary_tracks` | on | Tracks named "Commentary" don't count |
 | `air_status_source` | `anilist` | Where air status comes from: `anilist`, `sonarr` or `off` |
 | `hidden_tabs` | none | The tabs you've hidden |
+| `tab_order` | default order | The order you've dragged the tabs into |
+| `air_filter` | `all` | The Air status drop-down: `all`, `RELEASING`, `NOT_YET_RELEASED`, `HIATUS`, `FINISHED`, `CANCELLED` or `NONE` |
 | `sonarr_url` / `sonarr_api_key_encrypted` | | Sonarr connection (the key is `sonarr_api_key` in plain text off Windows) |
 | `sonarr_anime_only` / `sonarr_read_unknown` | on / on | Sonarr options |
 | `sonarr_path_from` / `sonarr_path_to` | | Path mapping |
@@ -215,7 +223,7 @@ To reset, close the app and delete the files you want to start over with (or all
 ```
 dubchecker/
   main.py         start-up: logging, UserData check, DPI/taskbar setup, Tk main loop, clean shutdown
-  config.py       Config dataclass, Overrides (manual matches), drive-letter-free path helpers
+  config.py       Config dataclass, Overrides (manual matches), Dismissed shows, drive-letter-free path helpers
   models.py       data types: AudioTrack, FileResult, ShowGroup, AniListMatch, DubInfo, ShowResult, enums
   scanner.py      folder listing (scandir), title cleaning, season detection and grouping, network detection
   media_probe.py  MediaInfo / ffprobe readers, ffprobe download, language classification
@@ -227,7 +235,7 @@ dubchecker/
   pipeline.py     the two-phase scan, the read throttle, scan statistics
   theme.py        sv-ttk light/dark, palettes, Card.* styles, DPI font scaling, title bar
   gui.py          main window
-  dialogs.py      episode details, Fix match, Settings
+  dialogs.py      episode details, Dismissed shows, Fix match, Settings
   results_store.py  saving and loading the last scan's results (last_scan.json)
   ui_common.py    labels, colours, the results model, helpers
 packaging/

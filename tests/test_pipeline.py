@@ -70,7 +70,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_seasons_decided_locally_arrive_first_and_together(self) -> None:
         _, events, _ = self.scan()
-        kinds = [e[0] for e in events if e[0] != "progress"]
+        kinds = [e[0] for e in events if e[0] not in ("progress", "phase")]
         self.assertEqual(kinds, ["results", "result", "result", "done"])
         batch = events[[e[0] for e in events].index("results")][1]
         self.assertEqual(sorted(r.key for r in batch), ["A Show (2020)|S1", "B Show|S1", "D Show|S1"])
@@ -153,6 +153,15 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(outcome.error, "Install MediaInfo")
         self.assertEqual(events[-1][0], "done")
 
+    def test_each_step_is_explained(self) -> None:
+        _, events, _ = self.scan()
+        phases = [e[1:] for e in events if e[0] == "phase"]
+        self.assertEqual([title for title, _ in phases],  # air status is off here, so there are two steps
+                         ["Step 1 of 2: Reading your episode files",
+                          "Step 2 of 2: Checking online whether English dubs exist"])
+        self.assertIn("2 seasons have no English audio in your files", phases[1][1])
+        self.assertIn("The other 3 seasons already have dual-audio files", phases[1][1])
+
     def test_missing_folder(self) -> None:
         pipeline, _ = make_pipeline(self.data, self.cache, FakeProber([]), FakeLookup([]))
         outcome = pipeline.run(root=str(self.lib / "nope"))
@@ -169,7 +178,7 @@ class PipelineTests(unittest.TestCase):
         stats = outcome.stats
         self.assertEqual((stats.files, stats.read, stats.cached, stats.lookups), (self.total_files, 8, 0, 2))
         self.assertGreaterEqual(stats.folders_listed, 8)
-        self.assertEqual(stats.short_text(), "(8 read from disk)")
+        self.assertEqual(stats.short_text(), "(8 files read from disk, 2 seasons looked up online)")
         self.assertIn("8 files", stats.log_line(1.0))
 
 

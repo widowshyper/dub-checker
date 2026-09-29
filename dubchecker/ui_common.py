@@ -60,6 +60,22 @@ TABS: dict[str, GroupInfo] = {
 AIR_LABELS = {"RELEASING": "Airing", "NOT_YET_RELEASED": "Not yet aired", "HIATUS": "On hiatus",
               "FINISHED": "Finished", "CANCELLED": "Cancelled"}
 _AIR_ORDER = {"RELEASING": 0, "NOT_YET_RELEASED": 1, "HIATUS": 2, "FINISHED": 3, "CANCELLED": 4}
+# The Air status drop-down above the list, in config.AIR_FILTERS order.
+AIR_FILTER_LABELS = {"all": "Any air status", **AIR_LABELS, "NONE": "Not checked"}
+
+
+def ordered_tabs(saved_order: list[str]) -> list[str]:
+    """Every tab, in the order the user dragged them into; new or unknown ones fall back to the default."""
+    order = [tab for tab in dict.fromkeys(saved_order) if tab in TABS]
+    return order + [tab for tab in TAB_IDS if tab not in order]
+
+
+def air_matches(r: ShowResult, air_filter: str) -> bool:
+    """Whether a season passes the Air status drop-down."""
+    if air_filter == "all":
+        return True
+    status = r.air.status if r.air and r.air.status else "NONE"
+    return status == air_filter
 
 STATUS_COLORS: dict[FileStatus, str] = {  # palette keys, used for the audio bars and episode rows
     FileStatus.DUAL: "green",
@@ -225,11 +241,15 @@ class ShowRow:
 
 
 class ResultsModel:
-    """Change results only through clear/add/replace, which keep the grouping by show up to date."""
+    """Change results only through clear/add/replace, which keep the grouping by show up to date.
+
+    Shows in ``dismissed`` (show folder names) are left out of the tabs, their counts and the list.
+    """
 
     def __init__(self) -> None:
         self.results: dict[str, ShowResult] = {}
         self._shows: dict[str, list[ShowResult]] | None = None  # by_show(), until the next change
+        self.dismissed: frozenset[str] = frozenset()
 
     def clear(self) -> None:
         self.results.clear()
@@ -266,19 +286,24 @@ class ResultsModel:
     def counts(self) -> dict[str, int]:
         """Number of shows (not seasons) under each tab (see TAB_IDS); a show can be under several."""
         counts = dict.fromkeys(TAB_IDS, 0)
-        for seasons in self.by_show().values():
+        for show_id, seasons in self.by_show().items():
+            if show_id in self.dismissed:
+                continue
             for name in {s.category.name for s in seasons}:
                 counts[name] += 1
             if any(in_tabs(s, {AIRING}) for s in seasons):
                 counts[AIRING] += 1
         return counts
 
-    def rows(self, tabs: set[str], filter_text: str = "") -> list[ShowRow]:
-        """The shows with a season under any of ``tabs`` (none selected = every show)."""
+    def rows(self, tabs: set[str], filter_text: str = "", air_filter: str = "all") -> list[ShowRow]:
+        """The shows with a season under any of ``tabs`` (none selected = every show) whose air status
+        passes ``air_filter``. Dismissed shows are left out."""
         needle = filter_text.strip().casefold()
         rows = []
         for show_id, seasons in self.by_show().items():
-            in_group = [s for s in seasons if in_tabs(s, tabs)]
+            if show_id in self.dismissed:
+                continue
+            in_group = [s for s in seasons if in_tabs(s, tabs) and air_matches(s, air_filter)]
             if not in_group:
                 continue
             row = ShowRow(show_id, seasons[0].group.show_title, in_group, seasons)

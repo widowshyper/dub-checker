@@ -18,7 +18,7 @@ from typing import Any
 from dubchecker import APP_NAME, __version__, theme
 from dubchecker import ui_common as ui
 from dubchecker.cache import Cache
-from dubchecker.config import Config, Overrides
+from dubchecker.config import AIR_FILTERS, Config, Dismissed, Overrides
 from dubchecker.dub_sources import make_online_lookup
 from dubchecker.media_probe import MediaProber
 from dubchecker.models import STATUS_BY_CODE, Category, FileResult, FileStatus, ShowResult, language_word
@@ -49,6 +49,16 @@ COLUMNS = (
 )
 NUMERIC_COLUMNS = frozenset({"audio", "episodes", "dual", "orig", "match"})
 BAR_WIDTH, BAR_HEIGHT = 96, 11  # the audio bar in the first column, at 100 % scaling
+DRAG_THRESHOLD = 10  # pixels (at 100 %) a tab must move before a press counts as dragging, not clicking
+# Episode rows: only the episodes that need attention are coloured; the square in the Audio column
+# already shows every episode's colour, so full-colour text on every row was just noise.
+EPISODE_TEXT_COLORS: dict[FileStatus, str] = {
+    FileStatus.DUAL: "fg",
+    FileStatus.ENGLISH_ONLY: "fg",
+    FileStatus.ORIGINAL_ONLY: "red",
+    FileStatus.UNLABELED: "amber",
+    FileStatus.ERROR: "muted",
+}
 
 
 class AudioBars:
@@ -162,6 +172,11 @@ class AppContext:
     overrides: Overrides
     cache: Cache
     data_dir: Path
+    dismissed: Dismissed | None = None  # made from data_dir when not given
+
+    def __post_init__(self) -> None:
+        if self.dismissed is None:
+            self.dismissed = Dismissed(self.data_dir / "dismissed.json")
 
     def save_config(self) -> None:
         try:
@@ -171,7 +186,8 @@ class AppContext:
 
 
 class SummaryCard(tk.Frame):
-    """A clickable card that acts as a tab: click to select or deselect it, right-click to hide it."""
+    """A clickable card that acts as a tab: click to select or deselect it, drag it sideways to move it,
+    right-click for more."""
 
     def __init__(self, app: App, parent: tk.Misc, tab: str) -> None:
         super().__init__(parent, highlightthickness=max(1, round(app.scale)), cursor="hand2")
@@ -180,6 +196,7 @@ class SummaryCard(tk.Frame):
         self.info = ui.TABS[tab]
         self.hover = False
         self.selected = False
+        self.dragging = False
         pad = round(14 * app.scale)
         self.stripe = tk.Frame(self, height=round(4 * app.scale))
         self.stripe.pack(fill="x", side="top")
@@ -190,7 +207,10 @@ class SummaryCard(tk.Frame):
         self.caption = tk.Label(self, text="shows", font="SunValleyCaptionFont", anchor="w")
         self.caption.pack(fill="x", padx=pad, pady=(0, round(10 * app.scale)))
         for widget in (self, self.stripe, self.count, self.title, self.caption):
-            widget.bind("<Button-1>", lambda _e: app.toggle_tab(tab))
+            # Selecting happens on release, so a press that turns into a drag moves the tab instead.
+            widget.bind("<ButtonPress-1>", lambda e: app.card_press(tab, e))
+            widget.bind("<B1-Motion>", lambda e: app.card_drag(tab, e))
+            widget.bind("<ButtonRelease-1>", lambda e: app.card_release(tab, e))
             widget.bind("<Button-3>", lambda e: app.tab_menu(tab, e))
             if sys.platform == "darwin":
                 widget.bind("<Button-2>", lambda e: app.tab_menu(tab, e))
@@ -215,9 +235,10 @@ class SummaryCard(tk.Frame):
     def recolor(self) -> None:
         pal = self.app.palette
         color = pal[self.info.color]
-        bg = pal["card_selected"] if self.selected else pal["card_hover"] if self.hover else pal["card"]
-        self.configure(background=bg, highlightbackground=color if self.selected else pal["border"],
-                       highlightcolor=color if self.selected else pal["border"])
+        bg = pal["card_selected"] if self.selected else pal["card_hover"] if self.hover or self.dragging else pal["card"]
+        edge = color if self.selected or self.dragging else pal["border"]
+        self.configure(background=bg, highlightbackground=edge, highlightcolor=edge,
+                       cursor="fleur" if self.dragging else "hand2")
         self.stripe.configure(background=color)
         self.count.configure(background=bg, foreground=color)
         self.title.configure(background=bg, foreground=pal["fg"])
@@ -235,8 +256,11 @@ class App:
         self.worker: threading.Thread | None = None
         self.helpers: list[threading.Thread] = []
         self.scanning = False
+        self.dismissed: Dismissed = ctx.dismissed  # type: ignore[assignment]  # set by AppContext
         self.model = ui.ResultsModel()
+        self.model.dismissed = self.dismissed.keys()
         self.tabs: set[str] = {Category.NEEDS_DUB.name}  # selected tabs (ui.TAB_IDS); none = every show
+        self._drag: dict[str, Any] | None = None  # the tab being pressed or dragged
         self.sort_column = "show"
         self.sort_desc = False
         self.expanded: set[str] = set()           # shows whose seasons are listed
@@ -257,6 +281,7 @@ class App:
         self.palette = theme.apply_theme(root, self.config.theme)
         self._build()
         self._layout_cards()
+        self._show_air_filter()
         self.apply_palette()
         root.bind("<<ThemeChanged>>", self._on_theme_changed, add="+")
         root.bind("<F5>", lambda _e: self.start_scan())
@@ -371,21 +396,54 @@ class App:
                                        command=self.clear_results)
         self.clear_button.pack(side="left", padx=(self.px(8), 0))
 
+        # While scanning: which step it's on and what that step does, in plain words.
+        self.phase_frame = self._card_frame(inner)
+        self.phase_frame.configure(highlightthickness=0)
+        self.phase_frame.grid(row=3, column=0, sticky="ew", pady=(self.px(14), 0))
+        self.phase_title = ttk.Label(self.phase_frame, style="Card.Strong.TLabel")
+        self.phase_title.pack(fill="x")
+        self.phase_detail = ttk.Label(self.phase_frame, style="Card.Muted.TLabel", wraplength=self.px(900))
+        self.phase_detail.pack(fill="x", pady=(self.px(2), 0))
+        inner.bind("<Configure>", lambda e: self.phase_detail.configure(wraplength=max(self.px(300), e.width - 8)),
+                   add="+")
         self.progress = ttk.Progressbar(inner, style="Card.Horizontal.TProgressbar", maximum=100)
-        self.progress.grid(row=3, column=0, sticky="ew", pady=(self.px(12), 0))
+        self.progress.grid(row=4, column=0, sticky="ew", pady=(self.px(10), 0))
         self.status_var = tk.StringVar(value=READY_TEXT)
-        ttk.Label(inner, textvariable=self.status_var, style="Card.Muted.TLabel").grid(
-            row=4, column=0, sticky="ew", pady=(self.px(8), 0))
+        ttk.Label(inner, textvariable=self.status_var, style="Card.TLabel").grid(
+            row=5, column=0, sticky="ew", pady=(self.px(8), 0))
         self._on_source_change(save=False)
         return card
 
     def _build_cards(self) -> ttk.Frame:
-        self.cards_frame = ttk.Frame(self.root)
+        """The tabs: a row of tick boxes choosing which are on show, then the tab cards themselves."""
+        section = ttk.Frame(self.root)
+        section.columnconfigure(0, weight=1)
+        bar = ttk.Frame(section)
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, self.px(8)))
+        bar.columnconfigure(1, weight=1)
+        ttk.Label(bar, text="Show tabs:", style="Strong.TLabel").grid(row=0, column=0, sticky="w",
+                                                                    padx=(0, self.px(10)))
+        self.tab_checks_frame = ttk.Frame(bar)
+        self.tab_checks_frame.grid(row=0, column=1, sticky="w")
+        self.tab_visible_vars: dict[str, tk.BooleanVar] = {}
+        self.tab_checks: dict[str, ttk.Checkbutton] = {}
+        for tab in ui.TAB_IDS:
+            variable = tk.BooleanVar(value=tab not in self.config.hidden_tabs)
+            self.tab_visible_vars[tab] = variable
+            self.tab_checks[tab] = ttk.Checkbutton(
+                self.tab_checks_frame, text=ui.TABS[tab].title, variable=variable,
+                command=lambda t=tab: self.set_tab_visible(t, self.tab_visible_vars[t].get()))
+        ttk.Label(bar, text="Click a tab to list its shows, click again to deselect it. Drag a tab to move it.",
+                  style="Caption.TLabel").grid(row=0, column=2, sticky="e")
+
+        self.cards_frame = ttk.Frame(section)
+        self.cards_frame.grid(row=1, column=0, sticky="ew")
         self.cards: dict[str, SummaryCard] = {tab: SummaryCard(self, self.cards_frame, tab) for tab in ui.TAB_IDS}
-        return self.cards_frame
+        return section
 
     def _layout_cards(self) -> None:
-        """Lay out the tabs that aren't hidden, sharing the width; hide the row if none are left."""
+        """Lay out the tabs that aren't hidden in the user's order, sharing the width; hide the row if none
+        are left. The tick boxes follow the same order."""
         visible = self.visible_tabs()
         for column in range(len(ui.TAB_IDS)):
             self.cards_frame.columnconfigure(column, weight=0, uniform="")
@@ -401,6 +459,11 @@ class App:
             self.cards_frame.grid()
         else:
             self.cards_frame.grid_remove()
+        for check in self.tab_checks.values():
+            check.pack_forget()
+        for tab in ui.ordered_tabs(self.config.tab_order):
+            if tab != ui.AIRING or self.air_status_on:  # no Airing tab when air status is off
+                self.tab_checks[tab].pack(side="left", padx=(0, self.px(16)))
 
     def _build_toolbar(self) -> ttk.Frame:
         bar = ttk.Frame(self.root)
@@ -409,24 +472,36 @@ class App:
         self.group_title.grid(row=0, column=0, sticky="w")
         self.group_description = ttk.Label(bar, style="Muted.TLabel")
         self.group_description.grid(row=1, column=0, sticky="w")
-        tools = ttk.Frame(bar)
-        tools.grid(row=0, column=1, rowspan=2, sticky="e")
-        ttk.Label(tools, text="Filter:").pack(side="left", padx=(0, self.px(6)))
+
+        # Narrowing the list: search text and air status.
+        filters = ttk.Frame(bar)
+        filters.grid(row=0, column=1, rowspan=2, sticky="e")
+        ttk.Label(filters, text="Search:").pack(side="left", padx=(0, self.px(6)))
         self.filter_var = tk.StringVar()
-        self.filter_entry = ttk.Entry(tools, textvariable=self.filter_var, width=22)
-        self.filter_entry.pack(side="left", padx=(0, self.px(12)))
+        self.filter_entry = ttk.Entry(filters, textvariable=self.filter_var, width=22)
+        self.filter_entry.pack(side="left")
         self.filter_entry.bind("<Escape>", self._clear_filter)
         self.filter_var.trace_add("write", lambda *_: self.refresh_table())
-        self.tab_menu_button = ttk.Menubutton(tools, text="Tabs")
-        self.tab_menu_button["menu"] = self._build_tabs_menu(self.tab_menu_button)
-        self.tab_menu_button.pack(side="left", padx=(0, self.px(6)))
+        self.air_filter_frame = ttk.Frame(filters)
+        self.air_filter_frame.pack(side="left", padx=(self.px(16), 0))
+        ttk.Label(self.air_filter_frame, text="Air status:").pack(side="left", padx=(0, self.px(6)))
+        self.air_filter_box = ttk.Combobox(self.air_filter_frame, state="readonly", width=15,
+                                           values=[ui.AIR_FILTER_LABELS[f] for f in AIR_FILTERS])
+        self.air_filter_box.set(ui.AIR_FILTER_LABELS[self.config.air_filter])
+        self.air_filter_box.pack(side="left")
+        self.air_filter_box.bind("<<ComboboxSelected>>", self._on_air_filter)
+
+        legend = ttk.Frame(bar)
+        legend.grid(row=2, column=0, sticky="w", pady=(self.px(10), 0))
+        tools = ttk.Frame(bar)
+        tools.grid(row=2, column=1, sticky="e", pady=(self.px(10), 0))
+        self.dismissed_button = ttk.Button(tools, command=self.open_dismissed)
+        self.dismissed_button.pack(side="left", padx=(0, self.px(6)))
+        self._update_dismissed_button()
         ttk.Button(tools, text="Expand all", command=lambda: self.expand_all(True)).pack(side="left")
         ttk.Button(tools, text="Collapse all", command=lambda: self.expand_all(False)).pack(
             side="left", padx=(self.px(6), 0))
         ttk.Button(tools, text="Export list...", command=self.export_csv).pack(side="left", padx=(self.px(6), 0))
-
-        legend = ttk.Frame(bar)
-        legend.grid(row=2, column=0, columnspan=2, sticky="w", pady=(self.px(6), 0))
         ttk.Label(legend, text="Audio key:", style="Caption.TLabel").pack(side="left", padx=(0, self.px(8)))
         self.legend_labels: list[tuple[ttk.Label, FileStatus]] = []
         for status, text in ui.LEGEND:
@@ -434,20 +509,6 @@ class App:
             label.pack(side="left", padx=(0, self.px(14)))
             self.legend_labels.append((label, status))
         return bar
-
-    def _build_tabs_menu(self, parent: tk.Misc) -> tk.Menu:
-        """The Tabs menu: tick the tabs to show; untick to hide them."""
-        menu = tk.Menu(parent, tearoff=False)
-        self.tab_visible_vars: dict[str, tk.BooleanVar] = {}
-        for tab in ui.TAB_IDS:
-            variable = tk.BooleanVar(value=tab not in self.config.hidden_tabs)
-            self.tab_visible_vars[tab] = variable
-            menu.add_checkbutton(label=f"Show the {ui.TABS[tab].title} tab", variable=variable,
-                                 command=lambda t=tab: self.set_tab_visible(t, self.tab_visible_vars[t].get()))
-        menu.add_separator()
-        menu.add_command(label="Show all tabs", command=self.show_all_tabs)
-        menu.add_command(label="Deselect all tabs (list every show)", command=lambda: self.select_tabs(set()))
-        return menu
 
     def _build_table(self) -> ttk.Frame:
         frame = ttk.Frame(self.root)
@@ -501,7 +562,8 @@ class App:
         footer.columnconfigure(0, weight=1)
         ttk.Label(footer, style="Caption.TLabel",
                   text="Tip: click a row's arrow or audio bar (or double-click it) to open it; double-click an "
-                       "episode for its audio tracks; right-click for more. F5 scans, Esc stops.").grid(
+                       "episode for its audio tracks; right-click a show to fix its match, dismiss it and more. "
+                       "F5 scans, Esc stops.").grid(
             row=0, column=0, sticky="w")
         ttk.Label(footer, text=f"Version {__version__}", style="Caption.TLabel").grid(row=0, column=1, sticky="e")
         return footer
@@ -534,7 +596,7 @@ class App:
         self.tree.tag_configure("hover", background=pal["row_hover"])
         self.tree.tag_configure("even", background=pal["row_even"])
         self.tree.tag_configure("odd", background=pal["row_odd"])
-        for status, color in ui.STATUS_COLORS.items():  # episode rows are coloured by their audio
+        for status, color in EPISODE_TEXT_COLORS.items():  # episodes that need attention stand out
             self.tree.tag_configure(f"audio_{status.name}", foreground=pal[color])
         self.empty_label.configure(background=pal["bg"], foreground=pal["muted"])  # the table's empty area shows the window colour
         self.bars.clear()
@@ -564,9 +626,11 @@ class App:
                 self._update_empty_state([])
 
     def settings_saved(self) -> None:
-        """Settings changed: the Sonarr summary, and whether the Airing tab and Air status column show."""
+        """Settings changed: the Sonarr summary, and whether the Airing tab, Air status column and
+        Air status filter show."""
         self.update_sonarr_summary()
         self._layout_cards()
+        self._show_air_filter()
         self.select_tabs(self.tabs)
 
     def update_sonarr_summary(self) -> None:
@@ -619,7 +683,8 @@ class App:
         self.results_source = source
         self.cancel = threading.Event()
         self._set_scanning(True)
-        self._show_progress("Starting...", None, True)
+        self._show_phase("Starting the scan...", "")
+        self._show_progress("Getting ready...", None, True)
         self.update_cards()
         self.refresh_table()
         self.worker = threading.Thread(target=self._scan_worker, args=(source, path, self.cancel),
@@ -676,6 +741,15 @@ class App:
         self.update_cards()
         self.refresh_table()
 
+    def _show_phase(self, title: str, explanation: str) -> None:
+        self.phase_title.configure(text=title)
+        self.phase_detail.configure(text=explanation)
+        if explanation:
+            self.phase_detail.pack(fill="x", pady=(self.px(2), 0))
+        else:
+            self.phase_detail.pack_forget()
+        self.phase_frame.grid()
+
     def _show_progress(self, text: str, fraction: float | None, busy: bool) -> None:
         self.status_var.set(text)
         self.progress.grid()
@@ -693,6 +767,7 @@ class App:
         self.progress.stop()
         self.progress.configure(mode="determinate", value=0)
         self.progress.grid_remove()
+        self.phase_frame.grid_remove()
 
     def _poll(self) -> None:
         changed = False
@@ -702,6 +777,9 @@ class App:
                 kind, payload = self.queue.get_nowait()
                 if kind == "progress":
                     progress = payload
+                elif kind == "phase":
+                    if self.scanning:
+                        self._show_phase(*payload)
                 elif kind in ("results", "result"):
                     items = payload[0] if kind == "results" else [payload[0]]
                     for result in items:
@@ -791,9 +869,64 @@ class App:
         return self.config.air_status_source != "off"
 
     def visible_tabs(self) -> list[str]:
-        """Tabs not hidden by the user. The Airing tab also goes when air status is switched off."""
-        return [tab for tab in ui.TAB_IDS if tab not in self.config.hidden_tabs
+        """Tabs not hidden by the user, in the user's order. The Airing tab also goes when air status is
+        switched off."""
+        return [tab for tab in ui.ordered_tabs(self.config.tab_order) if tab not in self.config.hidden_tabs
                 and (tab != ui.AIRING or self.air_status_on)]
+
+    # Moving tabs: drag a card sideways, or right-click it and choose Move left / Move right.
+
+    def card_press(self, tab: str, event: Any) -> None:
+        self._drag = {"tab": tab, "x": event.x_root, "moved": False}
+
+    def card_drag(self, tab: str, event: Any) -> None:
+        drag = self._drag
+        if drag is None or drag["tab"] != tab:
+            return
+        if not drag["moved"]:
+            if abs(event.x_root - drag["x"]) < self.px(DRAG_THRESHOLD):
+                return  # still a click
+            drag["moved"] = True
+            self.cards[tab].dragging = True
+            self.cards[tab].recolor()
+        visible = self.visible_tabs()
+        others = [t for t in visible if t != tab]
+        # The dragged tab goes before the first tab whose middle is still to the right of the pointer.
+        index = sum(1 for t in others
+                    if event.x_root > self.cards[t].winfo_rootx() + self.cards[t].winfo_width() / 2)
+        self._set_visible_order(others[:index] + [tab] + others[index:])
+
+    def card_release(self, tab: str, _event: Any) -> None:
+        drag, self._drag = self._drag, None
+        if drag is not None and drag["moved"]:
+            self.cards[tab].dragging = False
+            self.cards[tab].recolor()
+            self.ctx.save_config()
+            return
+        self.toggle_tab(tab)
+
+    def _set_visible_order(self, order: list[str]) -> None:
+        """Put the tabs on show in this order; hidden tabs keep their places among them."""
+        full = ui.ordered_tabs(self.config.tab_order)
+        visible = self.visible_tabs()
+        if order == visible:
+            return
+        slots = [i for i, tab in enumerate(full) if tab in visible]
+        for slot, tab in zip(slots, order):
+            full[slot] = tab
+        self.config.tab_order = full
+        self._layout_cards()
+
+    def move_tab(self, tab: str, step: int) -> None:
+        """Move a tab one place left (-1) or right (+1) among the tabs on show."""
+        visible = self.visible_tabs()
+        if tab not in visible:
+            return
+        index = visible.index(tab)
+        target = max(0, min(len(visible) - 1, index + step))
+        visible.insert(target, visible.pop(index))
+        self._set_visible_order(visible)
+        self.ctx.save_config()
 
     def view_tabs(self) -> set[str]:
         """The selected tabs that are on show. Empty means the list shows every show."""
@@ -834,6 +967,12 @@ class App:
         menu.add_command(label=f"Show only {title}", command=lambda: self.select_tabs({tab}))
         menu.add_command(label="Deselect all tabs (list every show)", command=lambda: self.select_tabs(set()))
         menu.add_separator()
+        visible = self.visible_tabs()
+        menu.add_command(label="Move left", command=lambda: self.move_tab(tab, -1),
+                         state="normal" if visible and visible[0] != tab else "disabled")
+        menu.add_command(label="Move right", command=lambda: self.move_tab(tab, 1),
+                         state="normal" if visible and visible[-1] != tab else "disabled")
+        menu.add_separator()
         menu.add_command(label="Hide this tab", command=lambda: self.set_tab_visible(tab, False))
         if self.config.hidden_tabs:
             menu.add_command(label="Show all tabs", command=self.show_all_tabs)
@@ -846,6 +985,54 @@ class App:
         counts = self.model.counts() if (self.model.results or self.scanning) else None
         for tab, card in self.cards.items():
             card.set_count(None if counts is None else counts[tab])
+
+    # ------------------------------------------------------------ air status filter
+
+    @property
+    def air_filter(self) -> str:
+        """The Air status drop-down's choice; "all" while air status is switched off."""
+        return self.config.air_filter if self.air_status_on else "all"
+
+    def _on_air_filter(self, _event: Any = None) -> None:
+        label = self.air_filter_box.get()
+        self.config.air_filter = next((f for f in AIR_FILTERS if ui.AIR_FILTER_LABELS[f] == label), "all")
+        self.air_filter_box.selection_clear()
+        self.ctx.save_config()
+        self.refresh_table()
+
+    def _show_air_filter(self) -> None:
+        if self.air_status_on:
+            self.air_filter_frame.pack(side="left", padx=(self.px(16), 0))
+        else:
+            self.air_filter_frame.pack_forget()
+
+    # ------------------------------------------------------------ dismissed shows
+
+    def _update_dismissed_button(self) -> None:
+        count = len(self.dismissed)
+        self.dismissed_button.configure(text=f"Dismissed shows ({count})" if count else "Dismissed shows")
+
+    def dismiss_show(self, show_id: str, title: str) -> None:
+        """Hide a show from every tab and the list, until it's brought back from Dismissed shows."""
+        self.dismissed.add(show_id, title, time.time())
+        self._dismissed_changed()
+        self.status_var.set(f"Dismissed {title}. It's hidden from every tab now; to bring it back, click "
+                            "Dismissed shows above the list.")
+
+    def restore_shows(self, show_ids: list[str]) -> None:
+        self.dismissed.remove(show_ids)
+        self._dismissed_changed()
+        self.status_var.set(f"Brought back {ui.plural(len(show_ids), 'show')}.")
+
+    def _dismissed_changed(self) -> None:
+        self.model.dismissed = self.dismissed.keys()
+        self._update_dismissed_button()
+        self.update_cards()
+        self.refresh_table()
+
+    def open_dismissed(self) -> None:
+        from dubchecker.dialogs import DismissedDialog
+        DismissedDialog(self)
 
     @staticmethod
     def _label(indent: str, arrow: bool, is_open: bool, text: str) -> str:
@@ -929,6 +1116,8 @@ class App:
 
         view = self.view_tabs()
         title, description = self._view_heading(view)
+        if self.air_filter != "all":
+            description += f" Only seasons that are “{ui.AIR_FILTER_LABELS[self.air_filter]}” are listed."
         self.group_title.configure(text=title)
         self.group_description.configure(text=description)
         # The Group column is only needed when seasons from different groups are listed together.
@@ -936,7 +1125,7 @@ class App:
         tree.configure(displaycolumns=[c[0] for c in COLUMNS
                                        if (mixed or c[0] != "group") and (self.air_status_on or c[0] != "air")])
 
-        rows = self.model.rows(view, self.filter_var.get())
+        rows = self.model.rows(view, self.filter_var.get(), self.air_filter)
         rows.sort(key=lambda r: (self._sort_value(r, self.sort_column), r.title.casefold()), reverse=self.sort_desc)
         for number, row in enumerate(rows):
             stripe = "odd" if number % 2 else "even"
@@ -978,8 +1167,11 @@ class App:
         view = self.view_tabs()
         if not self.model.results:
             text = "Scanning..." if self.scanning else ui.EMPTY_BEFORE_SCAN[self.source_var.get()]
-        elif self.filter_var.get().strip() and self.model.rows(view):
+        elif self.filter_var.get().strip() and self.model.rows(view, air_filter=self.air_filter):
             text = f"No shows match “{self.filter_var.get().strip()}”."
+        elif self.air_filter != "all" and self.model.rows(view):
+            text = (f"No shows here are “{ui.AIR_FILTER_LABELS[self.air_filter]}”. Set Air status to "
+                    f"“{ui.AIR_FILTER_LABELS['all']}” to list them all.")
         elif self.scanning:
             text = "Scanning..."
         elif len(view) == 1:
@@ -1225,6 +1417,9 @@ class App:
                              command=lambda n=name: self.search_nyaa(n))
         menu.add_separator()
         menu.add_command(label="Copy show name", command=lambda: self.copy_text(title))
+        show_id = result.group.folder_name if result is not None else iid[2:]
+        menu.add_command(label="Dismiss this show (hide it from every tab)",
+                         command=lambda: self.dismiss_show(show_id, title))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -1233,7 +1428,8 @@ class App:
     def _seasons_in_view(self, parent_iid: str) -> list[ShowResult]:
         """The seasons listed under a show row with the tabs selected now."""
         view = self.view_tabs()
-        return [s for s in self.model.by_show().get(parent_iid[2:], []) if ui.in_tabs(s, view)]
+        return [s for s in self.model.by_show().get(parent_iid[2:], [])
+                if ui.in_tabs(s, view) and ui.air_matches(s, self.air_filter)]
 
     def _focus_filter(self, _event: Any = None) -> str:
         self.filter_entry.focus_set()
@@ -1398,7 +1594,7 @@ class App:
 
     def export_csv(self) -> None:
         view = self.view_tabs()
-        rows = self.model.rows(view, self.filter_var.get())
+        rows = self.model.rows(view, self.filter_var.get(), self.air_filter)
         if not rows:
             messagebox.showinfo(APP_NAME, "There's nothing in this list to export.", parent=self.root)
             return

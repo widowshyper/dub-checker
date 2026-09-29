@@ -218,7 +218,7 @@ class ClientTests(unittest.TestCase):
         client, session = self.client([FakeResponse(429, headers={"Retry-After": "1"}), ok], status=messages.append)
         self.assertEqual(client.search("Anything"), [])
         self.assertEqual(session.posts, 2)
-        self.assertTrue(any("AniList asked us to slow down" in m for m in messages))
+        self.assertTrue(any("AniList is busy and asked Dub Checker to wait" in m for m in messages))
 
     def test_server_errors_are_retried(self) -> None:
         ok = FakeResponse(200, {"data": {"Page": {"media": []}}})

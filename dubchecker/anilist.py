@@ -169,7 +169,7 @@ class AniListClient:
         log.info("AniList rate limit hit; waiting %s s", seconds)
         deadline = time.monotonic() + seconds
         while (left := deadline - time.monotonic()) > 0:
-            self._say(f"AniList asked us to slow down - continuing in {int(left + 0.99)} s...")
+            self._say(f"AniList is busy and asked Dub Checker to wait - carrying on in {int(left + 0.99)} s...")
             wait_or_cancel(min(1.0, left), self.cancel)
 
 
