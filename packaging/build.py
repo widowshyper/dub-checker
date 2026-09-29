@@ -110,6 +110,7 @@ def install(built: Path) -> None:
             else:
                 shutil.copy2(child, TARGET / child.name)
         shutil.copy2(PACKAGING / "README.txt", TARGET / "README.txt")
+        shutil.copy2(ROOT / "LICENSE", TARGET / "LICENSE.txt")  # .txt so it opens with a double-click
     except PermissionError as exc:
         fail(f"Access Denied while copying into {TARGET}:\n  {exc}\n"
              "Is Dub Checker (or a file inside that folder) still open? Close it and run build.bat again.")

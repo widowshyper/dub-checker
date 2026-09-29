@@ -244,3 +244,7 @@ The MediaInfo and ffprobe tests are skipped when those tools aren't available. f
 - If `DubChecker.exe` is running from `dist`, the build stops and asks you to close it.
 
 **Regenerating the icon:** `pip install pillow`, then `python packaging/make_icon.py`.
+
+## License
+
+[MIT](LICENSE). You're free to use, copy, modify, merge, publish, distribute, sublicense and sell copies of Dub Checker, for any purpose. Keep the copyright and license notice with it. It comes with no warranty.
