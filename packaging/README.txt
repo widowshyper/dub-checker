@@ -70,7 +70,7 @@ UserData). Nothing else needs to move.
 STARTING OVER
 -------------
 Close Dub Checker, then delete things from the UserData folder:
-  config.json      your settings (includes your Sonarr API key)
+  config.json      your settings (includes your Sonarr API key, encrypted)
   overrides.json   your manual AniList matches
   cache.db         what Dub Checker remembers about your files and AniList
   last_scan.json   the results of your last scan
@@ -87,5 +87,6 @@ AniList answers, use Settings > General > Clear saved online info.
 PRIVACY
 -------
 Dub Checker sends show titles to AniList (anilist.co) and downloads the
-MAL-Dubs list from GitHub. Your Sonarr API key is stored in plain text in
-UserData\config.json - keep that folder private.
+MAL-Dubs list from GitHub. Your Sonarr API key is saved encrypted with
+Windows' own data protection, so only your Windows account on this PC can
+read it. On another PC you'll be asked to enter it again.

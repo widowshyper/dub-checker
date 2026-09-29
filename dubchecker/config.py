@@ -15,6 +15,8 @@ import threading
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
+from dubchecker import dpapi
+
 log = logging.getLogger(__name__)
 
 
@@ -123,10 +125,20 @@ class Config:
     window_geometry: str = ""
 
     _PORTABLE_FIELDS = ("library_path", "sonarr_path_to")
+    # The API key is plain text in memory but written to the file encrypted (see dpapi.py).
+    _SECRET_FIELD = "sonarr_api_key"
+    _SECRET_STORED = "sonarr_api_key_encrypted"
+
+    def __post_init__(self) -> None:
+        self.api_key_unreadable = False  # saved on another PC or Windows account, so it can't be decrypted here
+        self._unreadable_key = ""        # that encrypted key, kept so it still works back where it was saved
 
     @classmethod
     def load(cls, path: Path) -> Config:
-        """Load settings; unknown keys are ignored and the file is rewritten so new keys appear."""
+        """Load settings; unknown keys are ignored and the file is rewritten so new keys appear.
+
+        A plain-text API key from an older version is read and then saved encrypted.
+        """
         data: dict = {}
         if path.exists():
             try:
@@ -138,6 +150,14 @@ class Config:
         for f in fields(cls):
             if f.name in data:
                 setattr(config, f.name, _coerce(data[f.name], getattr(config, f.name)))
+        stored = data.get(cls._SECRET_STORED)
+        if isinstance(stored, str) and stored:
+            key = dpapi.decrypt(stored)
+            if key is None:
+                log.warning("The saved Sonarr API key can't be decrypted on this PC or Windows account")
+                config.api_key_unreadable, config._unreadable_key = True, stored
+            else:
+                config.sonarr_api_key = key
         for name in cls._PORTABLE_FIELDS:
             setattr(config, name, from_portable(getattr(config, name)))
         config.clamp()
@@ -161,11 +181,29 @@ class Config:
         if self.theme not in ("system", "light", "dark"):
             self.theme = "system"
 
+    def forget_unreadable_key(self) -> None:
+        """The user has seen the empty key field in Settings, so an old undecryptable key can go."""
+        self.api_key_unreadable, self._unreadable_key = False, ""
+
+    def _stored_secret(self) -> tuple[str, str]:
+        """(field name, value) to write for the API key: encrypted where possible."""
+        key = self.sonarr_api_key
+        if not key:
+            return (self._SECRET_STORED, self._unreadable_key) if self._unreadable_key else (self._SECRET_FIELD, "")
+        sealed = dpapi.encrypt(key)
+        if sealed is None:  # not Windows: no DPAPI, so it stays plain text (the file is made private below)
+            return self._SECRET_FIELD, key
+        return self._SECRET_STORED, sealed
+
     def save(self, path: Path) -> None:
-        data = asdict(self)
-        for name in self._PORTABLE_FIELDS:
-            data[name] = to_portable(data[name])
+        data: dict = {}
+        for name, value in asdict(self).items():
+            if name == self._SECRET_FIELD:
+                name, value = self._stored_secret()
+            data[name] = to_portable(value) if name in self._PORTABLE_FIELDS else value
         write_json(path, data)
+        if os.name != "nt":
+            os.chmod(path, 0o600)  # only your user account can read it
 
 
 class Overrides:

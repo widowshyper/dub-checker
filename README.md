@@ -111,7 +111,11 @@ A scan runs in two phases:
 Choose **Scan from: Sonarr**, then open **Sonarr settings...**:
 
 - **Address:** e.g. `http://localhost:8989`. If you set a URL base in Sonarr, add it (`http://nas:8989/sonarr`).
-- **API key:** find it in Sonarr under Settings > General. It's stored in plain text in `UserData/config.json`, so keep that folder private.
+- **API key:** find it in Sonarr under Settings > General.
+  - **On Windows it's saved encrypted** in `UserData/config.json`, using Windows' own data protection (DPAPI), so only your Windows account on this PC can read it.
+  - If you move the folder to another PC or Windows account, the app will ask you to enter the key again. The encrypted copy is kept, so it still works when you move back.
+  - A plain-text key saved by an older version is encrypted automatically the first time you start this one.
+  - On macOS and Linux it's saved as plain text, in a file only your user account can read.
 - **Only series set to the Anime series type:** on by default.
 - **Read files myself when Sonarr doesn't know a track's language:** on by default. Only files Sonarr couldn't label (or hasn't analysed) are read, through the same cache and throttle as folder scans.
 - **Path mapping:** only needed if Sonarr runs on another machine or in Docker. For example, Sonarr sees `/tv` while this PC sees `\\nas\media\tv`. Fill in both or neither. If files can't be reached, you get one warning suggesting this.
@@ -139,7 +143,7 @@ Everything is in `UserData/` next to the program:
 
 | File | What it holds |
 |---|---|
-| `config.json` | Settings (see below). Rewritten on start so new settings appear; unknown keys are ignored. |
+| `config.json` | Settings (see below), including the Sonarr API key, encrypted on Windows. Rewritten on start so new settings appear; unknown keys are ignored. |
 | `overrides.json` | Your manual AniList matches: season key → AniList ID. |
 | `cache.db` | SQLite: audio tracks of every file read (keyed by path, size and date) and AniList answers. |
 | `last_scan.json` | The results of your last scan, shown again when Dub Checker starts. Deleted by Clear results. |
@@ -159,7 +163,7 @@ Everything is in `UserData/` next to the program:
 | `network_workers_enabled` / `network_workers` | off / 6 | A separate number for network shares |
 | `pause_enabled` / `pause_every_files` / `pause_seconds` | off / 50 / 30 | Breaks while reading |
 | `ignore_commentary_tracks` | on | Tracks named "Commentary" don't count |
-| `sonarr_url` / `sonarr_api_key` | | Sonarr connection |
+| `sonarr_url` / `sonarr_api_key_encrypted` | | Sonarr connection (the key is `sonarr_api_key` in plain text off Windows) |
 | `sonarr_anime_only` / `sonarr_read_unknown` | on / on | Sonarr options |
 | `sonarr_path_from` / `sonarr_path_to` | | Path mapping |
 

@@ -246,6 +246,9 @@ class App:
         self._restore_geometry()
         self._reset_view()
         self._load_saved_results()
+        if self.config.api_key_unreadable:
+            self.status_var.set("Your Sonarr API key was saved on another PC or Windows account, so it can't be "
+                                "read here. Enter it again in Settings > Sonarr.")
         self._poll()
 
     # ------------------------------------------------------------ building

@@ -167,6 +167,29 @@ class ClearResultsTests(unittest.TestCase):
             app.stop_polling()
             root.destroy()
 
+    def test_settings_window_opens_saves_and_encrypts_the_key(self) -> None:
+        from dubchecker import dpapi
+        from dubchecker.dialogs import SettingsDialog
+        config = self.ctx.config
+        config.api_key_unreadable = True  # as if saved on another PC
+        dialog = SettingsDialog(self.app, 2)
+        self.root.update()
+
+        def label_texts(widget):
+            for child in widget.winfo_children():
+                if child.winfo_class() == "TLabel":
+                    yield str(child.cget("text"))
+                yield from label_texts(child)
+
+        self.assertTrue(any("another PC" in text for text in label_texts(dialog)))
+        dialog.sonarr_key.set("typed-in-key")
+        dialog._save()
+        self.assertEqual(config.sonarr_api_key, "typed-in-key")
+        self.assertFalse(config.api_key_unreadable)
+        if dpapi.available():
+            self.assertNotIn("typed-in-key", self.ctx.config_path.read_text("utf-8"))
+        self.assertNotIn("no API key", self.app.sonarr_label.cget("text"))  # the main window caught up
+
     def test_scan_source_is_called_local_files(self) -> None:
         self.assertEqual(self.app.source_buttons[0].cget("text"), "Local files")
         self.assertTrue(self.app.results_are_local)

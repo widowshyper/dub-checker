@@ -11,7 +11,7 @@ from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from dubchecker import APP_NAME, theme
+from dubchecker import APP_NAME, dpapi, theme
 from dubchecker import ui_common as ui
 from dubchecker.anilist import parse_anilist_id
 from dubchecker.models import FileStatus, ShowResult
@@ -416,7 +416,13 @@ class SettingsDialog(Dialog):
         self._setting(page, "Address", ttk.Entry(page, textvariable=self.sonarr_url, width=40),
                       "For example http://localhost:8989 (add the URL base if you set one, e.g. /sonarr).")
         self._setting(page, "API key", ttk.Entry(page, textvariable=self.sonarr_key, width=40, show="•"),
-                      "In Sonarr: Settings > General > API Key. It is saved in UserData\\config.json.")
+                      "In Sonarr: Settings > General > API Key. " + (
+                          "Dub Checker saves it encrypted, so only your Windows account on this PC can read it."
+                          if dpapi.available() else
+                          "It's saved in UserData/config.json, which only your user account can read."))
+        if self.cfg.api_key_unreadable:
+            self._hint(page, "Your API key was saved on another PC or Windows account, so it can't be read "
+                             "here. Please enter it again.")
         for text, variable in (("Only series set to the Anime series type", self.anime_only),
                                ("Read files myself when Sonarr doesn't know a track's language", self.read_unknown)):
             ttk.Checkbutton(page, text=text, variable=variable).grid(
@@ -537,6 +543,7 @@ class SettingsDialog(Dialog):
         cfg.pause_seconds = pause_seconds
         cfg.sonarr_url = self.sonarr_url.get().strip()
         cfg.sonarr_api_key = self.sonarr_key.get().strip()
+        cfg.forget_unreadable_key()  # replaced by what's in the field now (even if that's nothing)
         cfg.sonarr_anime_only = self.anime_only.get()
         cfg.sonarr_read_unknown = self.read_unknown.get()
         cfg.sonarr_path_from, cfg.sonarr_path_to = path_from, path_to
