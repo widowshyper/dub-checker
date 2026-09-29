@@ -7,6 +7,7 @@ The original language is Japanese, Korean or Chinese.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import os
@@ -22,7 +23,7 @@ from dubchecker.categorize import categorize_local, categorize_lookup, needs_loo
 from dubchecker.config import Config, Overrides, to_portable
 from dubchecker.dub_sources import LookupResult
 from dubchecker.media_probe import ProbeUnavailable, build_file_result
-from dubchecker.models import (Cancelled, FileResult, FileStatus, ShowGroup, ShowResult, VideoFile, season_key,
+from dubchecker.models import (Cancelled, Category, FileResult, FileStatus, ShowGroup, ShowResult, VideoFile, season_key,
                                season_sort_key, strip_id_tags)
 from dubchecker.scanner import FolderLister, group_show, is_network_path, list_library, natural_key
 from dubchecker.sonarr import SonarrClient, SonarrError, last_path_part, map_path, tracks_from_media_info
@@ -473,6 +474,36 @@ class ScanPipeline:
                 self.stats.lookups += 1
                 results.append(result)
                 self.emit("result", result)
+            if self.config.check_air_status and not self.stopped:
+                self._add_air_status(results, service)
         finally:
             self.stats.lookup_time = time.monotonic() - started
         return results
+
+    def _add_air_status(self, results: list[ShowResult], service: LookupService | None) -> None:
+        """Last step: seasons decided from your files skipped AniList, so look them up now for their air
+        status. Their group doesn't change. Seasons still missing English audio go first."""
+        todo = [i for i, r in enumerate(results) if r.match is None and not r.looked_up and not r.stopped]
+        todo.sort(key=lambda i: results[i].category is not Category.NEEDS_DUB)
+        for number, index in enumerate(todo):
+            if self.cancel.is_set():
+                self.stopped = True
+                return
+            season = results[index]
+            try:
+                if service is None:
+                    self.progress("Getting ready to check air status...", busy=True)
+                    service = self.lookup_factory()
+                self.progress(f"Checking air status: show {number + 1} of {len(todo)} ({season.group.display_title})",
+                              number / len(todo))
+                lookup = service.lookup(season.group)
+            except Cancelled:
+                self.stopped = True
+                return
+            except Exception as exc:  # e.g. AniList unreachable: the season keeps its result, just no air status
+                log.warning("Air status lookup failed for %s: %s", season.group.display_title, exc)
+                continue
+            self.stats.lookups += 1
+            if lookup.match is not None:
+                results[index] = dataclasses.replace(season, match=lookup.match)
+                self.emit("result", results[index])

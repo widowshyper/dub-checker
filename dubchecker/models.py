@@ -39,6 +39,9 @@ STATUS_CODES: dict[FileStatus, str] = {FileStatus.DUAL: "d", FileStatus.ORIGINAL
 STATUS_BY_CODE: dict[str, FileStatus] = {code: status for status, code in STATUS_CODES.items()}
 
 
+AIRING_STATUSES = frozenset({"RELEASING", "NOT_YET_RELEASED", "HIATUS"})
+
+
 class Category(Enum):
     NEEDS_DUB = "Needs English Audio"
     NO_DUB = "No Dub Exists"
@@ -170,6 +173,14 @@ class AniListMatch:
     confidence: float = 0.0
     manual: bool = False
     note: str = ""
+    air_status: str = ""                 # AniList: RELEASING, NOT_YET_RELEASED, FINISHED, CANCELLED, HIATUS
+    next_episode: int | None = None      # the next episode to air, while it's airing
+    next_airing_at: int | None = None    # when it airs (Unix time)
+
+    @property
+    def still_airing(self) -> bool:
+        """Airing, on hiatus, or not out yet: more episodes (and dub episodes) may still come."""
+        return self.air_status in AIRING_STATUSES
 
     @property
     def url(self) -> str:

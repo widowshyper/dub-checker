@@ -286,6 +286,7 @@ class SettingsDialog(Dialog):
         self.theme_var = tk.StringVar(value=dict(self.THEMES)[cfg.theme])
         self.threshold = tk.StringVar(value=str(cfg.confidence_threshold))
         self.expiry = tk.StringVar(value=str(cfg.cache_expiry_days))
+        self.air_status = tk.BooleanVar(value=cfg.check_air_status)
         self.workers = tk.StringVar(value=str(cfg.probe_workers))
         self.net_enabled = tk.BooleanVar(value=cfg.network_workers_enabled)
         self.net_workers = tk.StringVar(value=str(cfg.network_workers))
@@ -363,6 +364,14 @@ class SettingsDialog(Dialog):
         ttk.Label(row, text="days").pack(side="left", padx=(self.px(6), 0))
         self._setting(page, "Check AniList again after", row,
                       "Answers from AniList are saved and reused until then, which keeps rescans fast.")
+
+        self._heading(page, "Air status")
+        ttk.Checkbutton(page, text="Check air status for every show", variable=self.air_status,
+                        style="Switch.TCheckbutton").grid(row=self._next_row(page), column=0, columnspan=2,
+                                                          sticky="w", pady=(self.px(8), 0))
+        self._hint(page, "Shows decided from your files alone are looked up on AniList too, so the Airing tab "
+                         "and Air status column cover everything. The first scan takes longer; after that "
+                         "finished shows are remembered and airing ones are refreshed twice a day.")
 
         self._heading(page, "Saved information")
         clear_row = ttk.Frame(page)
@@ -535,6 +544,7 @@ class SettingsDialog(Dialog):
         cfg.theme = next(value for value, name in self.THEMES if name == self.theme_var.get())
         cfg.confidence_threshold = threshold
         cfg.cache_expiry_days = expiry
+        cfg.check_air_status = self.air_status.get()
         cfg.probe_workers = workers
         cfg.network_workers_enabled = self.net_enabled.get()
         cfg.network_workers = net_workers

@@ -77,7 +77,10 @@ A scan runs in two phases:
 
 **The results table**
 
-- The four cards at the top are the tabs. They count shows, not seasons.
+- **The cards at the top are the tabs.** They count shows, not seasons.
+  - Click a tab to select it and click it again to deselect it. Several can be selected at once, and their shows are listed together with a **Group** column saying where each season is. With none selected, every show is listed.
+  - Tabs you don't use can be hidden: right-click one and choose **Hide this tab**, or untick it in the **Tabs** menu above the list. Hidden tabs stay hidden after a restart, and **Show all tabs** brings them back.
+- **Airing tab and Air status column:** these show whether a show is still airing, not out yet, on hiatus, finished or cancelled, with the next episode's date while it airs (for example "Airing - ep 8 on 3 Oct"). The Airing tab lists shows that are still airing or not out yet, where an English dub may still be on its way. It cuts across the other groups. Click the **Air status** header to sort airing shows first.
 - A show with several seasons is a bold row. **To open or close a show or a season**, you can:
   - click its ► arrow, or anywhere on its coloured audio bar;
   - double-click the row;
@@ -102,9 +105,16 @@ A scan runs in two phases:
   - **Open file location** (after a Local files scan) opens the season's folder in Explorer with its first episode selected; on a show row it opens the show's folder. In the episode window, right-click a file to open its location.
   - **Search for replacements in Sonarr...** (when Sonarr is set up) asks Sonarr to look for new releases of the episodes that only have the original-language audio. On an episode row it searches for just that episode. See [Sonarr](#sonarr).
   - **Search Nyaa for "... dual audio"** opens [nyaa.si](https://nyaa.si/) in your web browser, searching the Anime category for the show's name plus "dual audio", most seeders first. If AniList knows the show by another name (such as its romaji title, which many releases use), that search is offered too. The episode window has the same search as a button. Dub Checker only opens the search page; it doesn't download anything.
-- **Filter** (Ctrl+F) narrows the list; Esc clears it. **Export list...** saves the current group as CSV (UTF-8, opens in Excel), one row per season.
+- **Filter** (Ctrl+F) narrows the list; Esc clears it. **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group and air status.
 - **Your results are kept.** When you close Dub Checker and open it again, the last scan is back, with the same tab and open shows, and the status line says when it was made. A scan that was stopped, or still running when you closed the window, keeps the part that was finished.
 - **Clear results** empties the table, resets the window and forgets the saved list, so it doesn't come back next time. Your settings, manual matches, and what Dub Checker knows about your files and AniList are kept, so the next scan is quick. To forget saved AniList answers, use **Settings > General > Clear saved online info**.
+
+## Air status
+
+Air status comes from AniList.
+- Shows that were looked up on AniList get it automatically.
+- Shows decided from your own files alone (a season with dual-audio episodes) normally skip AniList. With **Settings > General > Check air status for every show** switched on (the default), a last step called "Checking air status" looks them up too. Their group doesn't change, and seasons still missing English audio go first.
+- The first scan takes longer because AniList asks apps to pace their requests. After that, finished shows are remembered for 30 days and still-airing shows are checked again twice a day.
 
 ## Sonarr
 
@@ -163,6 +173,8 @@ Everything is in `UserData/` next to the program:
 | `network_workers_enabled` / `network_workers` | off / 6 | A separate number for network shares |
 | `pause_enabled` / `pause_every_files` / `pause_seconds` | off / 50 / 30 | Breaks while reading |
 | `ignore_commentary_tracks` | on | Tracks named "Commentary" don't count |
+| `check_air_status` | on | Also look up shows decided from your files, so every show gets an air status |
+| `hidden_tabs` | none | The tabs you've hidden |
 | `sonarr_url` / `sonarr_api_key_encrypted` | | Sonarr connection (the key is `sonarr_api_key` in plain text off Windows) |
 | `sonarr_anime_only` / `sonarr_read_unknown` | on / on | Sonarr options |
 | `sonarr_path_from` / `sonarr_path_to` | | Path mapping |

@@ -12,7 +12,7 @@ import ntpath
 import os
 import sys
 import threading
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from dubchecker import dpapi
@@ -86,6 +86,8 @@ def write_json(path: Path, data: object, compact: bool = False) -> None:
 def _coerce(value: object, default: object) -> object:
     """Convert a loaded JSON value to the type of the default, or keep the default."""
     try:
+        if isinstance(default, list):
+            return [str(v) for v in value] if isinstance(value, list) else default
         if isinstance(default, bool):
             if isinstance(value, str):
                 return value.strip().lower() in ("1", "true", "yes", "on")
@@ -123,6 +125,8 @@ class Config:
     sonarr_path_from: str = ""
     sonarr_path_to: str = ""
     window_geometry: str = ""
+    check_air_status: bool = True                 # also look up shows decided from your files, for air status
+    hidden_tabs: list = field(default_factory=list)  # names of the group tabs you've hidden
 
     _PORTABLE_FIELDS = ("library_path", "sonarr_path_to")
     # The API key is plain text in memory but written to the file encrypted (see dpapi.py).

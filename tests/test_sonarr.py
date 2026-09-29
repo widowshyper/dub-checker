@@ -163,6 +163,7 @@ class ServerTests(unittest.TestCase):
     def scan(self, **config):
         log: list = []
         prober = FakeProber(log)
+        config.setdefault("check_air_status", False)  # the air status step has its own tests
         pipeline, _ = make_pipeline(self.data, self.cache, prober, FakeLookup(log), config=Config(**config))
         outcome = pipeline.run(sonarr=SonarrClient(self.url, API_KEY))
         return outcome, prober, log, {r.key: r for r in outcome.results}

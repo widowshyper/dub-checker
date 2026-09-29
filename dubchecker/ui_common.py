@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,21 @@ GROUPS: dict[Category, GroupInfo] = {
         "Check Manually", "Dub Checker couldn't be sure about these - the notes say why.",
         "amber", "Nothing to check - Dub Checker was sure about everything."),
 }
+
+# The tabs: the four groups (by Category name) plus Airing, which cuts across them.
+AIRING = "AIRING"
+TAB_IDS: tuple[str, ...] = (*(c.name for c in Category), AIRING)
+TABS: dict[str, GroupInfo] = {
+    **{c.name: info for c, info in GROUPS.items()},
+    AIRING: GroupInfo(
+        "Airing", "Still airing or not out yet, so an English dub may still be on its way.",
+        "purple", "Nothing airing - or air status hasn't been checked yet. Switch it on in Settings > General "
+                  "and scan again."),
+}
+
+AIR_LABELS = {"RELEASING": "Airing", "NOT_YET_RELEASED": "Not yet aired", "HIATUS": "On hiatus",
+              "FINISHED": "Finished", "CANCELLED": "Cancelled"}
+_AIR_ORDER = {"RELEASING": 0, "NOT_YET_RELEASED": 1, "HIATUS": 2, "FINISHED": 3, "CANCELLED": 4}
 
 STATUS_COLORS: dict[FileStatus, str] = {  # palette keys, used for the audio bars and episode rows
     FileStatus.DUAL: "green",
@@ -137,6 +153,41 @@ def format_duration(seconds: float) -> str:
 
 # ---------------------------------------------------------------- model
 
+def in_tabs(r: ShowResult, tabs: set[str]) -> bool:
+    """Whether a season is listed when these tabs are selected. No tabs selected lists everything."""
+    if not tabs:
+        return True
+    return r.category.name in tabs or (AIRING in tabs and r.match is not None and r.match.still_airing)
+
+
+def air_status_text(r: ShowResult, now: float | None = None) -> str:
+    """e.g. 'Airing - ep 8 on 3 Oct', 'Finished', or '-' when it hasn't been checked."""
+    match = r.match
+    if match is None or not match.air_status:
+        return "-"
+    label = AIR_LABELS.get(match.air_status, match.air_status.title())
+    if match.next_episode and match.next_airing_at:
+        when = time.localtime(match.next_airing_at)
+        date = f"{when.tm_mday} {time.strftime('%b', when)}"
+        verb = "on" if match.next_airing_at > (time.time() if now is None else now) else "aired"
+        return f"{label} - ep {match.next_episode} {verb} {date}"
+    return label
+
+
+def air_sort_key(r: ShowResult) -> tuple:
+    """Airing shows first, soonest next episode first; unchecked last."""
+    match = r.match
+    status = match.air_status if match else ""
+    return (_AIR_ORDER.get(status, 9), (match.next_airing_at or 0) if match else 0)
+
+
+def show_air_status(seasons: list[ShowResult]) -> ShowResult | None:
+    """The season whose air status speaks for the show: one still airing, else the latest checked one."""
+    checked = [s for s in seasons if s.match and s.match.air_status]
+    airing = [s for s in checked if s.match.still_airing]  # type: ignore[union-attr]
+    return (airing or checked or [None])[-1]
+
+
 @dataclass
 class ShowRow:
     show_id: str
@@ -155,11 +206,12 @@ class ShowRow:
         n = len(self.all_seasons)
         return f"{n} seasons" if len(self.seasons) == n else f"{len(self.seasons)} of {n} seasons"
 
-    def also_text(self, category: Category) -> str:
-        """e.g. 'Also: Season 2 is in Fully Dubbed; Seasons 3 and 4 are in Check Manually'."""
+    def also_text(self) -> str:
+        """The seasons not listed here, e.g. 'Also: Season 2 is in Fully Dubbed; Seasons 3 and 4 are in ...'."""
+        shown = {id(s) for s in self.seasons}
         others: dict[Category, list[str]] = {}
         for s in self.all_seasons:
-            if s.category is not category:
+            if id(s) not in shown:
                 others.setdefault(s.category, []).append(season_name(s))
         if not others:
             return ""
@@ -211,19 +263,22 @@ class ResultsModel:
     def show_count(self) -> int:
         return len(self.by_show())
 
-    def counts(self) -> dict[Category, int]:
-        """Number of shows (not seasons) in each group; a show can be in several."""
-        counts = {c: 0 for c in Category}
+    def counts(self) -> dict[str, int]:
+        """Number of shows (not seasons) under each tab (see TAB_IDS); a show can be under several."""
+        counts = dict.fromkeys(TAB_IDS, 0)
         for seasons in self.by_show().values():
-            for category in {s.category for s in seasons}:
-                counts[category] += 1
+            for name in {s.category.name for s in seasons}:
+                counts[name] += 1
+            if any(in_tabs(s, {AIRING}) for s in seasons):
+                counts[AIRING] += 1
         return counts
 
-    def rows(self, category: Category, filter_text: str = "") -> list[ShowRow]:
+    def rows(self, tabs: set[str], filter_text: str = "") -> list[ShowRow]:
+        """The shows with a season under any of ``tabs`` (none selected = every show)."""
         needle = filter_text.strip().casefold()
         rows = []
         for show_id, seasons in self.by_show().items():
-            in_group = [s for s in seasons if s.category is category]
+            in_group = [s for s in seasons if in_tabs(s, tabs)]
             if not in_group:
                 continue
             row = ShowRow(show_id, seasons[0].group.show_title, in_group, seasons)

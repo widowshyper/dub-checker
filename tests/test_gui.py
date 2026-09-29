@@ -37,32 +37,32 @@ class ResultsModelTests(unittest.TestCase):
 
     def test_counts_are_shows_not_seasons(self) -> None:
         counts = self.model.counts()
-        self.assertEqual(counts[Category.NEEDS_DUB], 2)
-        self.assertEqual(counts[Category.FULLY_DUBBED], 1)
-        self.assertEqual(counts[Category.NO_DUB], 0)
+        self.assertEqual(counts["NEEDS_DUB"], 2)
+        self.assertEqual(counts["FULLY_DUBBED"], 1)
+        self.assertEqual(counts["NO_DUB"], 0)
 
     def test_rows_group_seasons_under_their_show(self) -> None:
-        rows = self.model.rows(Category.NEEDS_DUB)
+        rows = self.model.rows({"NEEDS_DUB"})
         self.assertEqual([r.title for r in rows], ["Alpha", "Beta"])
         alpha = rows[0]
         self.assertFalse(alpha.single)
         self.assertEqual(alpha.seasons_text(), "2 of 3 seasons")
         self.assertEqual(alpha.total("episodes"), 4)
-        self.assertEqual(alpha.also_text(Category.NEEDS_DUB), "Also: Season 1 is in Fully Dubbed")
+        self.assertEqual(alpha.also_text(), "Also: Season 1 is in Fully Dubbed")
         self.assertTrue(rows[1].single)
 
     def test_a_show_appears_in_every_group_holding_one_of_its_seasons(self) -> None:
-        self.assertEqual([r.title for r in self.model.rows(Category.FULLY_DUBBED)], ["Alpha"])
+        self.assertEqual([r.title for r in self.model.rows({"FULLY_DUBBED"})], ["Alpha"])
 
     def test_filter(self) -> None:
-        self.assertEqual([r.title for r in self.model.rows(Category.NEEDS_DUB, "bet")], ["Beta"])
-        self.assertEqual([r.title for r in self.model.rows(Category.NEEDS_DUB, "ALPHA anilist")], ["Alpha"])
-        self.assertEqual(self.model.rows(Category.NEEDS_DUB, "zzz"), [])
+        self.assertEqual([r.title for r in self.model.rows({"NEEDS_DUB"}, "bet")], ["Beta"])
+        self.assertEqual([r.title for r in self.model.rows({"NEEDS_DUB"}, "ALPHA anilist")], ["Alpha"])
+        self.assertEqual(self.model.rows({"NEEDS_DUB"}, "zzz"), [])
 
     def test_replace_only_existing(self) -> None:
         self.assertTrue(self.model.replace(season("Beta", 1, Category.NO_DUB)))
         self.assertFalse(self.model.replace(season("Delta", 1, Category.NO_DUB)))
-        self.assertEqual(self.model.counts()[Category.NO_DUB], 1)
+        self.assertEqual(self.model.counts()["NO_DUB"], 1)
 
 
 @unittest.skipUnless(tk_available(), "no display for Tk")
@@ -118,7 +118,7 @@ class ClearResultsTests(unittest.TestCase):
         self.app.save_results()
         self.assertTrue(self.app.results_path.exists())
         self.assertEqual(len(self.app.tree.get_children()), 1)
-        self.assertEqual(self.app.cards[Category.NEEDS_DUB].count.cget("text"), "1")
+        self.assertEqual(self.app.cards["NEEDS_DUB"].count.cget("text"), "1")
         self.assertTrue(self.app.progress.winfo_manager())
 
         self.app.clear_results()
@@ -140,14 +140,14 @@ class ClearResultsTests(unittest.TestCase):
 
     def test_results_are_still_there_after_closing_and_reopening(self) -> None:
         self.fill()
-        self.app.select_group(Category.FULLY_DUBBED)
+        self.app.select_tabs({"FULLY_DUBBED"})
         self.app.on_close()  # the real close path saves
         root, app = self.new_app()
         try:
             self.assertEqual(len(app.model), 3)
-            self.assertIs(app.current, Category.FULLY_DUBBED)
+            self.assertEqual(app.tabs, {"FULLY_DUBBED"})
             self.assertIn("Alpha", app.expanded)
-            self.assertEqual(app.cards[Category.NEEDS_DUB].count.cget("text"), "1")
+            self.assertEqual(app.cards["NEEDS_DUB"].count.cget("text"), "1")
             self.assertEqual(app.tree.get_children(), ("s|Beta",))
             self.assertTrue(app.status_var.get().startswith("Showing your last scan from"))
             self.assertEqual(app.model.results["Alpha|S2"].files[0].status, FileStatus.ORIGINAL_ONLY)
@@ -454,12 +454,12 @@ class ClickTests(unittest.TestCase):
         self.result.notes = ["3 of 4 episodes need a closer look because their audio isn't labelled"]
         self.app.refresh_table()
         tree.column("notes", width=60)
-        self.app.tooltip.cell = ("s|Kr|S1", "#8")  # the Notes column
+        self.app.tooltip.cell = ("s|Kr|S1", "notes")
         self.app.tooltip._show(100, 100)
         self.assertIsNotNone(self.app.tooltip.window)
         self.app.tooltip.hide()
         tree.column("notes", width=900)
-        self.app.tooltip.cell = ("s|Kr|S1", "#8")
+        self.app.tooltip.cell = ("s|Kr|S1", "notes")
         self.app.tooltip._show(100, 100)
         self.assertIsNone(self.app.tooltip.window)
 

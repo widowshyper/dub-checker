@@ -29,7 +29,7 @@ class SavedScan:
     source: str = "folder"          # "folder" (local files) or "sonarr"
     finished_at: float = field(default_factory=time.time)
     stopped: bool = False
-    group: str = Category.NEEDS_DUB.name
+    tabs: list[str] = field(default_factory=lambda: [Category.NEEDS_DUB.name])  # the selected tabs
     expanded: list[str] = field(default_factory=list)          # shows with their seasons listed
     expanded_seasons: list[str] = field(default_factory=list)  # seasons with their episodes listed
 
@@ -64,7 +64,7 @@ def _result_to_dict(r: ShowResult) -> dict:
 
 def save_scan(path: Path, scan: SavedScan) -> None:
     write_json(path, {"version": FORMAT_VERSION, "source": scan.source, "finished_at": scan.finished_at,
-                      "stopped": scan.stopped, "group": scan.group, "expanded": sorted(scan.expanded),
+                      "stopped": scan.stopped, "tabs": list(scan.tabs), "expanded": sorted(scan.expanded),
                       "expanded_seasons": sorted(scan.expanded_seasons),
                       "results": [_result_to_dict(r) for r in scan.results]}, compact=True)
 
@@ -109,11 +109,13 @@ def load_scan(path: Path) -> SavedScan | None:
         if data.get("version") != FORMAT_VERSION:
             log.info("Ignoring %s: it was saved by a different version", path)
             return None
-        group = data.get("group", Category.NEEDS_DUB.name)
+        tabs = data.get("tabs")
+        if not isinstance(tabs, list):  # saved before tabs could be combined: one group
+            tabs = [data.get("group", Category.NEEDS_DUB.name)]
         return SavedScan(results=[_result_from_dict(r) for r in data.get("results") or []],
                          source=data.get("source", "folder"), finished_at=float(data.get("finished_at") or 0),
                          stopped=bool(data.get("stopped")),
-                         group=group if group in Category.__members__ else Category.NEEDS_DUB.name,
+                         tabs=[str(tab) for tab in tabs],
                          expanded=[str(e) for e in data.get("expanded") or []],
                          expanded_seasons=[str(e) for e in data.get("expanded_seasons") or []])
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:

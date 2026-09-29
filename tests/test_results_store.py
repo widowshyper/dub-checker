@@ -45,10 +45,10 @@ class ResultsStoreTests(unittest.TestCase):
 
     def test_round_trip_keeps_everything_the_table_and_details_show(self) -> None:
         original = sample_results()
-        save_scan(self.path, SavedScan(original, "folder", 1700000000.0, True, "CHECK", ["Show (2020)"]))
+        save_scan(self.path, SavedScan(original, "folder", 1700000000.0, True, ["CHECK", "AIRING"], ["Show (2020)"]))
         loaded = load_scan(self.path)
-        self.assertEqual((loaded.source, loaded.finished_at, loaded.stopped, loaded.group, loaded.expanded),
-                         ("folder", 1700000000.0, True, "CHECK", ["Show (2020)"]))
+        self.assertEqual((loaded.source, loaded.finished_at, loaded.stopped, loaded.tabs, loaded.expanded),
+                         ("folder", 1700000000.0, True, ["CHECK", "AIRING"], ["Show (2020)"]))
         self.assertEqual(loaded.results, original)
         for before, after in zip(original, loaded.results):
             for text in (ui.anilist_text, ui.confirmed_text, ui.match_text, ui.notes_text):

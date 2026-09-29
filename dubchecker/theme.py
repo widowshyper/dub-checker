@@ -24,13 +24,13 @@ PALETTES: dict[str, dict[str, str]] = {
         "bg": "#fafafa", "card": "#ffffff", "card_hover": "#f4f4f5", "card_selected": "#f0f5fd",
         "border": "#e2e2e4", "fg": "#1c1c1c", "muted": "#5f6368", "link": "#005fb8",
         "row_even": "#fafafa", "row_odd": "#f1f1f4", "row_hover": "#e3ecf9", "on_color": "#ffffff",
-        "red": "#c42b1c", "grey": "#6b6f76", "green": "#0f7b0f", "amber": "#9d5d00", "blue": "#0063b1",
+        "red": "#c42b1c", "grey": "#6b6f76", "green": "#0f7b0f", "amber": "#9d5d00", "blue": "#0063b1", "purple": "#6b3fd4",
     },
     "dark": {
         "bg": "#1c1c1c", "card": "#262626", "card_hover": "#2e2e2e", "card_selected": "#2b3440",
         "border": "#3a3a3a", "fg": "#fafafa", "muted": "#a8a8a8", "link": "#79c4ff",
         "row_even": "#1c1c1c", "row_odd": "#262626", "row_hover": "#2d3a4b", "on_color": "#1c1c1c",
-        "red": "#ff8f8f", "grey": "#b3b3b3", "green": "#6ccb5f", "amber": "#f5c451", "blue": "#60b0ff",
+        "red": "#ff8f8f", "grey": "#b3b3b3", "green": "#6ccb5f", "amber": "#f5c451", "blue": "#60b0ff", "purple": "#b99cff",
     },
 }
 

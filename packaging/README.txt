@@ -45,6 +45,11 @@ your web browser.
 Sonarr only swaps a file for a release it rates higher, so give dual-audio
 releases a higher score with a custom format in Sonarr.
 
+Click a tab at the top to select or deselect it; several can be selected at once,
+and with none selected every show is listed. Right-click a tab (or use the Tabs
+menu) to hide tabs you don't use. The Airing tab and Air status column show
+which shows are still airing - a dub may still be on its way for those.
+
 Your last results are kept when you close Dub Checker and shown again the
 next time you open it.
 

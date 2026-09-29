@@ -11,21 +11,22 @@ from typing import Any, Callable
 
 
 from dubchecker.cache import MISSING, Cache
-from dubchecker.models import AniListMatch, Cancelled, ShowGroup
+from dubchecker.models import AIRING_STATUSES, AniListMatch, Cancelled, ShowGroup
 
 log = logging.getLogger(__name__)
 
 API_URL = "https://graphql.anilist.co"
 MEDIA_FIELDS = ("id idMal type title { romaji english native } synonyms format episodes seasonYear "
-                "startDate { year month day } popularity siteUrl")
+                "startDate { year month day } popularity siteUrl status")
 SEARCH_QUERY = ("query ($s: String) { Page(perPage: 15) { media(search: $s, type: ANIME) { %s } } }"
                 % MEDIA_FIELDS)
 # voiceActors comes back null unless the character edge also selects node { id }.
-DETAILS_QUERY = ("query ($id: Int) { Media(id: $id, type: ANIME) { %s "
+DETAILS_QUERY = ("query ($id: Int) { Media(id: $id, type: ANIME) { %s nextAiringEpisode { airingAt episode } "
                  "relations { edges { relationType node { %s } } } "
                  "characters(perPage: 25, sort: [ROLE, RELEVANCE]) { edges { node { id } "
                  "voiceActors(language: ENGLISH) { id } } } } }" % (MEDIA_FIELDS, MEDIA_FIELDS))
 SEQUEL_FORMATS = frozenset({"TV", "TV_SHORT", "ONA"})
+AIRING_REFRESH_DAYS = 0.5  # saved details of a show that's still airing are checked again after 12 hours
 
 
 class AniListError(Exception):
@@ -80,14 +81,25 @@ class AniListClient:
         return ((data or {}).get("Page") or {}).get("media") or []
 
     def details(self, media_id: int) -> dict | None:
-        data = self._query(f"media:{media_id}", DETAILS_QUERY, {"id": int(media_id)})
+        """Full details. Saved answers are reused for ``expiry_days``, except that a show that's still
+        airing (or was saved before air status was asked for) is refreshed after ``AIRING_REFRESH_DAYS``."""
+        def usable(data: dict | None, age_days: float) -> bool:
+            media = (data or {}).get("Media")
+            if media is None or age_days <= AIRING_REFRESH_DAYS:
+                return True
+            return "status" in media and media["status"] not in AIRING_STATUSES
+
+        data = self._query(f"media:{media_id}", DETAILS_QUERY, {"id": int(media_id)}, usable)
         return (data or {}).get("Media")
 
-    def _query(self, key: str, query: str, variables: dict) -> dict | None:
+    def _query(self, key: str, query: str, variables: dict,
+               usable: Callable[[dict | None, float], bool] | None = None) -> dict | None:
         if self.cache is not None:
-            cached = self.cache.get_anilist(key, self.expiry_days)
+            cached, age_days = self.cache.get_anilist_with_age(key, self.expiry_days)
             if cached is not MISSING:
-                return cached.get("data") if isinstance(cached, dict) else None
+                data = cached.get("data") if isinstance(cached, dict) else None
+                if usable is None or usable(data, age_days):
+                    return data
         body = self._post(query, variables)
         if self.cache is not None:
             self.cache.save_anilist(key, body)  # includes 404 answers
@@ -250,7 +262,9 @@ def parse_anilist_id(text: str) -> int | None:
 
 
 def to_match(media: dict, confidence: float, manual: bool = False, note: str = "") -> AniListMatch:
+    """``media`` is best the full details, which also say when the next episode airs."""
     title = media.get("title") or {}
+    upcoming = media.get("nextAiringEpisode") or {}
     return AniListMatch(
         anilist_id=int(media["id"]),
         title=title.get("english") or title.get("romaji") or title.get("native") or f"AniList #{media['id']}",
@@ -263,6 +277,9 @@ def to_match(media: dict, confidence: float, manual: bool = False, note: str = "
         confidence=round(confidence, 1),
         manual=manual,
         note=note,
+        air_status=media.get("status") or "",
+        next_episode=upcoming.get("episode"),
+        next_airing_at=upcoming.get("airingAt"),
     )
 
 
@@ -304,9 +321,11 @@ class AniListMatcher:
         if season == 0:
             capped = min(base_score, self.threshold - 1)
             note = "Specials and OVAs are hard to match automatically - please check this one"
-            return MatchOutcome(to_match(base_media, capped, note=note), self.client.details(base_media["id"]))
+            details = self.client.details(base_media["id"])
+            return MatchOutcome(to_match(details or base_media, capped, note=note), details)
         if season is None or season == 1:
-            return MatchOutcome(to_match(base_media, base_score), self.client.details(base_media["id"]))
+            details = self.client.details(base_media["id"])
+            return MatchOutcome(to_match(details or base_media, base_score), details)
         return self._find_later_season(group, season, base_score, base_media)
 
     def _best(self, title: str, year: int | None) -> tuple[float, dict] | None:

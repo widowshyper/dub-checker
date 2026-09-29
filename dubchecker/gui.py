@@ -36,14 +36,16 @@ TOOLTIP_DELAY_MS = 550
 REFRESH_INTERVAL = 0.5  # seconds between table rebuilds while a scan is adding results
 # (id, heading, width at 100 %, stretches)
 COLUMNS = (
-    ("show", "Show", 250, True),
-    ("anilist", "Matched on AniList", 280, False),
-    ("episodes", "Episodes", 75, False),
-    ("dual", "Dual audio", 95, False),
-    ("orig", "Original only", 110, False),
-    ("confirmed", "Dub confirmed by", 190, False),
-    ("match", "Match %", 75, False),
-    ("notes", "Notes", 200, True),
+    ("show", "Show", 230, True),
+    ("anilist", "Matched on AniList", 220, False),
+    ("air", "Air status", 150, False),
+    ("episodes", "Episodes", 70, False),
+    ("dual", "Dual audio", 90, False),
+    ("orig", "Original only", 105, False),
+    ("confirmed", "Dub confirmed by", 160, False),
+    ("match", "Match %", 70, False),
+    ("notes", "Notes", 220, True),
+    ("group", "Group", 140, False),  # only shown when several groups are listed together
 )
 NUMERIC_COLUMNS = frozenset({"audio", "episodes", "dual", "orig", "match"})
 BAR_WIDTH, BAR_HEIGHT = 96, 11  # the audio bar in the first column, at 100 % scaling
@@ -91,6 +93,21 @@ class AudioBars:
         return self._images[key]
 
 
+def column_at(tree: ttk.Treeview, x: int) -> str:
+    """The column id under x ("show", "notes", ...), "#0" for the Audio column, or "" for none.
+
+    Treeview reports "#1", "#2"... by position among the columns on show, which changes when the
+    Group column appears, so this turns that into the column's name.
+    """
+    column = tree.identify_column(x)
+    if column in ("", "#0"):
+        return column
+    try:
+        return str(tree.column(column, "id"))
+    except tk.TclError:
+        return ""
+
+
 class CellTooltip:
     """Shows the full text of a table cell that's too narrow for it, after the pointer rests there."""
 
@@ -102,7 +119,7 @@ class CellTooltip:
         self.window: tk.Toplevel | None = None
 
     def track(self, event: Any) -> None:
-        cell = (self.tree.identify_row(event.y), self.tree.identify_column(event.x))
+        cell = (self.tree.identify_row(event.y), column_at(self.tree, event.x))
         if cell == self.cell:
             return
         self.hide()
@@ -154,13 +171,13 @@ class AppContext:
 
 
 class SummaryCard(tk.Frame):
-    """One of the four clickable group cards that act as the tabs."""
+    """A clickable card that acts as a tab: click to select or deselect it, right-click to hide it."""
 
-    def __init__(self, app: App, parent: tk.Misc, category: Category) -> None:
+    def __init__(self, app: App, parent: tk.Misc, tab: str) -> None:
         super().__init__(parent, highlightthickness=max(1, round(app.scale)), cursor="hand2")
         self.app = app
-        self.category = category
-        self.info = ui.GROUPS[category]
+        self.tab = tab
+        self.info = ui.TABS[tab]
         self.hover = False
         self.selected = False
         pad = round(14 * app.scale)
@@ -173,7 +190,10 @@ class SummaryCard(tk.Frame):
         self.caption = tk.Label(self, text="shows", font="SunValleyCaptionFont", anchor="w")
         self.caption.pack(fill="x", padx=pad, pady=(0, round(10 * app.scale)))
         for widget in (self, self.stripe, self.count, self.title, self.caption):
-            widget.bind("<Button-1>", lambda _e: app.select_group(category))
+            widget.bind("<Button-1>", lambda _e: app.toggle_tab(tab))
+            widget.bind("<Button-3>", lambda e: app.tab_menu(tab, e))
+            if sys.platform == "darwin":
+                widget.bind("<Button-2>", lambda e: app.tab_menu(tab, e))
             widget.bind("<Enter>", self._on_enter)
             widget.bind("<Leave>", self._on_leave)
 
@@ -216,7 +236,7 @@ class App:
         self.helpers: list[threading.Thread] = []
         self.scanning = False
         self.model = ui.ResultsModel()
-        self.current = Category.NEEDS_DUB
+        self.tabs: set[str] = {Category.NEEDS_DUB.name}  # selected tabs (ui.TAB_IDS); none = every show
         self.sort_column = "show"
         self.sort_desc = False
         self.expanded: set[str] = set()           # shows whose seasons are listed
@@ -236,6 +256,7 @@ class App:
         self._set_icon()
         self.palette = theme.apply_theme(root, self.config.theme)
         self._build()
+        self._layout_cards()
         self.apply_palette()
         root.bind("<<ThemeChanged>>", self._on_theme_changed, add="+")
         root.bind("<F5>", lambda _e: self.start_scan())
@@ -359,15 +380,27 @@ class App:
         return card
 
     def _build_cards(self) -> ttk.Frame:
-        frame = ttk.Frame(self.root)
-        self.cards: dict[Category, SummaryCard] = {}
-        for column, category in enumerate(Category):
-            frame.columnconfigure(column, weight=1, uniform="cards")
-            card = SummaryCard(self, frame, category)
-            card.grid(row=0, column=column, sticky="nsew",
-                      padx=(0 if column == 0 else self.px(6), 0 if column == 3 else self.px(6)))
-            self.cards[category] = card
-        return frame
+        self.cards_frame = ttk.Frame(self.root)
+        self.cards: dict[str, SummaryCard] = {tab: SummaryCard(self, self.cards_frame, tab) for tab in ui.TAB_IDS}
+        return self.cards_frame
+
+    def _layout_cards(self) -> None:
+        """Lay out the tabs that aren't hidden, sharing the width; hide the row if none are left."""
+        visible = self.visible_tabs()
+        for column in range(len(ui.TAB_IDS)):
+            self.cards_frame.columnconfigure(column, weight=0, uniform="")
+        for tab, card in self.cards.items():
+            if tab not in visible:
+                card.grid_remove()
+        for column, tab in enumerate(visible):
+            self.cards_frame.columnconfigure(column, weight=1, uniform="cards")
+            self.cards[tab].grid(row=0, column=column, sticky="nsew",
+                                 padx=(0 if column == 0 else self.px(6),
+                                       0 if column == len(visible) - 1 else self.px(6)))
+        if visible:
+            self.cards_frame.grid()
+        else:
+            self.cards_frame.grid_remove()
 
     def _build_toolbar(self) -> ttk.Frame:
         bar = ttk.Frame(self.root)
@@ -384,6 +417,9 @@ class App:
         self.filter_entry.pack(side="left", padx=(0, self.px(12)))
         self.filter_entry.bind("<Escape>", self._clear_filter)
         self.filter_var.trace_add("write", lambda *_: self.refresh_table())
+        self.tab_menu_button = ttk.Menubutton(tools, text="Tabs")
+        self.tab_menu_button["menu"] = self._build_tabs_menu(self.tab_menu_button)
+        self.tab_menu_button.pack(side="left", padx=(0, self.px(6)))
         ttk.Button(tools, text="Expand all", command=lambda: self.expand_all(True)).pack(side="left")
         ttk.Button(tools, text="Collapse all", command=lambda: self.expand_all(False)).pack(
             side="left", padx=(self.px(6), 0))
@@ -399,6 +435,20 @@ class App:
             self.legend_labels.append((label, status))
         return bar
 
+    def _build_tabs_menu(self, parent: tk.Misc) -> tk.Menu:
+        """The Tabs menu: tick the tabs to show; untick to hide them."""
+        menu = tk.Menu(parent, tearoff=False)
+        self.tab_visible_vars: dict[str, tk.BooleanVar] = {}
+        for tab in ui.TAB_IDS:
+            variable = tk.BooleanVar(value=tab not in self.config.hidden_tabs)
+            self.tab_visible_vars[tab] = variable
+            menu.add_checkbutton(label=f"Show the {ui.TABS[tab].title} tab", variable=variable,
+                                 command=lambda t=tab: self.set_tab_visible(t, self.tab_visible_vars[t].get()))
+        menu.add_separator()
+        menu.add_command(label="Show all tabs", command=self.show_all_tabs)
+        menu.add_command(label="Deselect all tabs (list every show)", command=lambda: self.select_tabs(set()))
+        return menu
+
     def _build_table(self) -> ttk.Frame:
         frame = ttk.Frame(self.root)
         frame.columnconfigure(0, weight=1)
@@ -412,9 +462,12 @@ class App:
             self.tree.column(column, width=self.px(width), minwidth=self.px(min(width, 70)), stretch=stretch,
                              anchor="w")
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
+        # All the columns don't fit a small window, so the table can scroll sideways too.
+        sideways = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=scrollbar.set, xscrollcommand=sideways.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
+        sideways.grid(row=1, column=0, sticky="ew")
         # Tag priority follows creation order, so the hover colour must exist before the stripes.
         self.tree.tag_configure("hover")
         self.tree.tag_configure("even")
@@ -476,7 +529,7 @@ class App:
         for frame in self._card_frames:
             frame.configure(background=pal["card"], highlightbackground=pal["border"], highlightcolor=pal["border"])
         for card in self.cards.values():
-            card.selected = card.category is self.current
+            card.selected = card.tab in self.tabs
             card.recolor()
         self.tree.tag_configure("hover", background=pal["row_hover"])
         self.tree.tag_configure("even", background=pal["row_even"])
@@ -722,17 +775,62 @@ class App:
 
     # ------------------------------------------------------------ groups and table
 
-    def select_group(self, category: Category) -> None:
-        self.current = category
+    # ------------------------------------------------------------ tabs
+
+    def visible_tabs(self) -> list[str]:
+        return [tab for tab in ui.TAB_IDS if tab not in self.config.hidden_tabs]
+
+    def view_tabs(self) -> set[str]:
+        """The selected tabs that are on show. Empty means the list shows every show."""
+        return self.tabs & set(self.visible_tabs())
+
+    def select_tabs(self, tabs: set[str]) -> None:
+        self.tabs = set(tabs)
         for card in self.cards.values():
-            card.selected = card.category is category
+            card.selected = card.tab in self.tabs
             card.recolor()
         self.refresh_table()
 
+    def toggle_tab(self, tab: str) -> None:
+        """Clicking a tab selects it (alongside any others) or, if it's selected, deselects it."""
+        self.select_tabs(self.tabs ^ {tab})
+
+    def set_tab_visible(self, tab: str, visible: bool) -> None:
+        hidden = [t for t in self.config.hidden_tabs if t != tab] + ([] if visible else [tab])
+        self.config.hidden_tabs = [t for t in ui.TAB_IDS if t in hidden]
+        self.ctx.save_config()
+        self.tab_visible_vars[tab].set(visible)
+        self._layout_cards()
+        self.select_tabs(self.tabs - ({tab} if not visible else set()))
+
+    def show_all_tabs(self) -> None:
+        for tab in ui.TAB_IDS:
+            self.tab_visible_vars[tab].set(True)
+        self.config.hidden_tabs = []
+        self.ctx.save_config()
+        self._layout_cards()
+        self.refresh_table()
+
+    def tab_menu(self, tab: str, event: Any) -> None:
+        menu = tk.Menu(self.root, tearoff=False)
+        title = ui.TABS[tab].title
+        menu.add_command(label=f"Deselect {title}" if tab in self.tabs else f"Select {title}",
+                         command=lambda: self.toggle_tab(tab))
+        menu.add_command(label=f"Show only {title}", command=lambda: self.select_tabs({tab}))
+        menu.add_command(label="Deselect all tabs (list every show)", command=lambda: self.select_tabs(set()))
+        menu.add_separator()
+        menu.add_command(label="Hide this tab", command=lambda: self.set_tab_visible(tab, False))
+        if self.config.hidden_tabs:
+            menu.add_command(label="Show all tabs", command=self.show_all_tabs)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     def update_cards(self) -> None:
         counts = self.model.counts() if (self.model.results or self.scanning) else None
-        for category, card in self.cards.items():
-            card.set_count(None if counts is None else counts[category])
+        for tab, card in self.cards.items():
+            card.set_count(None if counts is None else counts[tab])
 
     @staticmethod
     def _label(indent: str, arrow: bool, is_open: bool, text: str) -> str:
@@ -740,24 +838,31 @@ class App:
             return f"{indent}{text}"
         return f"{indent}{ARROW_OPEN if is_open else ARROW_CLOSED}  {text}"
 
+    # The value tuples follow COLUMNS: show, anilist, air, episodes, dual, orig, confirmed, match, notes, group.
+
     def _season_values(self, r: ShowResult, label: str) -> tuple:
-        return (label, ui.anilist_text(r), r.episodes, r.dual, r.original_only, ui.confirmed_text(r),
-                ui.match_text(r), ui.notes_text(r))
+        return (label, ui.anilist_text(r), ui.air_status_text(r), r.episodes, r.dual, r.original_only,
+                ui.confirmed_text(r), ui.match_text(r), ui.notes_text(r), r.category.value)
 
     def _parent_values(self, row: ui.ShowRow, label: str) -> tuple:
         sources: list[str] = []
+        groups: list[str] = []
         for s in row.seasons:
             for source in (s.dub.sources if s.dub else []):
                 if source not in sources:
                     sources.append(source)
-        return (label, row.seasons_text(), row.total("episodes"), row.total("dual"),
-                row.total("original_only"), ", ".join(sources) or "-", "", row.also_text(self.current))
+            if s.category.value not in groups:
+                groups.append(s.category.value)
+        speaker = ui.show_air_status(row.all_seasons)
+        return (label, row.seasons_text(), ui.air_status_text(speaker) if speaker else "-", row.total("episodes"),
+                row.total("dual"), row.total("original_only"), ", ".join(sources) or "-", "", row.also_text(),
+                ", ".join(groups))
 
     @staticmethod
     def _episode_values(f: FileResult, label: str) -> tuple:
         tick = "✓"
-        return (label, "", "", tick if f.status is FileStatus.DUAL else "",
-                tick if f.status is FileStatus.ORIGINAL_ONLY else "", "", "", ui.episode_note(f))
+        return (label, "", "", "", tick if f.status is FileStatus.DUAL else "",
+                tick if f.status is FileStatus.ORIGINAL_ONLY else "", "", "", ui.episode_note(f), "")
 
     def _sort_value(self, row: ui.ShowRow, column: str) -> Any:
         first = row.seasons[0]
@@ -777,6 +882,11 @@ class App:
             return ui.confirmed_text(first).casefold()
         if column == "notes":
             return ui.notes_text(first).casefold()
+        if column == "air":  # airing first, soonest next episode first
+            speaker = ui.show_air_status(row.all_seasons)
+            return ui.air_sort_key(speaker) if speaker else (9, 0)
+        if column == "group":
+            return first.category.value
         return row.title.casefold()
 
     def sort_by(self, column: str) -> None:
@@ -802,11 +912,15 @@ class App:
         tree.delete(*tree.get_children())
         self.titles.clear()
 
-        info = ui.GROUPS[self.current]
-        self.group_title.configure(text=info.title)
-        self.group_description.configure(text=info.description)
+        view = self.view_tabs()
+        title, description = self._view_heading(view)
+        self.group_title.configure(text=title)
+        self.group_description.configure(text=description)
+        # The Group column is only needed when seasons from different groups are listed together.
+        mixed = len(view) != 1 or ui.AIRING in view
+        tree.configure(displaycolumns=[c[0] for c in COLUMNS if mixed or c[0] != "group"])
 
-        rows = self.model.rows(self.current, self.filter_var.get())
+        rows = self.model.rows(view, self.filter_var.get())
         rows.sort(key=lambda r: (self._sort_value(r, self.sort_column), r.title.casefold()), reverse=self.sort_desc)
         for number, row in enumerate(rows):
             stripe = "odd" if number % 2 else "even"
@@ -831,18 +945,31 @@ class App:
         tree.yview_moveto(top)
         self._update_empty_state(rows)
 
+    @staticmethod
+    def _view_heading(view: set[str]) -> tuple[str, str]:
+        if not view:
+            return "All shows", "No tab is selected, so every show is listed. Click a tab above to narrow it down."
+        titles = [ui.TABS[tab].title for tab in ui.TAB_IDS if tab in view]
+        if len(titles) == 1:
+            info = ui.TABS[next(iter(view))]
+            return info.title, info.description
+        return " + ".join(titles), "These tabs are listed together; the Group column says where each season is."
+
     def _update_empty_state(self, rows: list) -> None:
         if rows:
             self.empty_label.place_forget()
             return
+        view = self.view_tabs()
         if not self.model.results:
             text = "Scanning..." if self.scanning else ui.EMPTY_BEFORE_SCAN[self.source_var.get()]
-        elif self.filter_var.get().strip() and self.model.rows(self.current):
+        elif self.filter_var.get().strip() and self.model.rows(view):
             text = f"No shows match “{self.filter_var.get().strip()}”."
         elif self.scanning:
             text = "Scanning..."
+        elif len(view) == 1:
+            text = ui.TABS[next(iter(view))].empty
         else:
-            text = ui.GROUPS[self.current].empty
+            text = "Nothing in the selected tabs."
         self.empty_label.configure(text=text)
         self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
         self.empty_label.lift()
@@ -955,11 +1082,11 @@ class App:
         iid = tree.identify_row(event.y)
         if not self._can_open(iid):
             return ""
-        column = tree.identify_column(event.x)
+        column = column_at(tree, event.x)
         if column == "#0":
             return iid
-        if column == "#1":
-            bbox = tree.bbox(iid, "#1")
+        if column == "show":
+            bbox = tree.bbox(iid, "show")
             if bbox and event.x - bbox[0] <= self._arrow_width(iid):
                 return iid
         return ""
@@ -983,7 +1110,7 @@ class App:
             return "break"  # the first click of the double-click already toggled it
         iid = tree.identify_row(event.y)
         result = self._result_for(iid)
-        if iid.startswith("s|") and tree.identify_column(event.x) == "#2" and result and result.match:
+        if iid.startswith("s|") and column_at(tree, event.x) == "anilist" and result and result.match:
             ui.open_url(result.match.url)
         elif self._can_open(iid):
             self.toggle(iid)
@@ -1088,8 +1215,9 @@ class App:
             menu.grab_release()
 
     def _seasons_in_view(self, parent_iid: str) -> list[ShowResult]:
-        """The seasons listed under a show row in the current group."""
-        return [s for s in self.model.by_show().get(parent_iid[2:], []) if s.category is self.current]
+        """The seasons listed under a show row with the tabs selected now."""
+        view = self.view_tabs()
+        return [s for s in self.model.by_show().get(parent_iid[2:], []) if ui.in_tabs(s, view)]
 
     def _focus_filter(self, _event: Any = None) -> str:
         self.filter_entry.focus_set()
@@ -1194,7 +1322,7 @@ class App:
             delete_scan(self.results_path)
             return
         scan = SavedScan(list(self.model.results.values()), self.results_source, self.results_time or time.time(),
-                         self.results_stopped, self.current.name, sorted(self.expanded),
+                         self.results_stopped, sorted(self.tabs), sorted(self.expanded),
                          sorted(self.expanded_seasons))
         try:
             save_scan(self.results_path, scan)
@@ -1211,7 +1339,7 @@ class App:
         self.expanded = set(saved.expanded)
         self.expanded_seasons = set(saved.expanded_seasons)
         self.update_cards()
-        self.select_group(Category[saved.group])
+        self.select_tabs({tab for tab in saved.tabs if tab in ui.TAB_IDS})
         when = time.strftime("%d %b %Y at %H:%M", time.localtime(saved.finished_at))
         early = " (stopped before it finished)" if saved.stopped else ""
         self.status_var.set(f"Showing your last scan from {when}{early}: {ui.plural(self.model.show_count(), 'show')}. "
@@ -1251,11 +1379,12 @@ class App:
         return True
 
     def export_csv(self) -> None:
-        rows = self.model.rows(self.current, self.filter_var.get())
+        view = self.view_tabs()
+        rows = self.model.rows(view, self.filter_var.get())
         if not rows:
             messagebox.showinfo(APP_NAME, "There's nothing in this list to export.", parent=self.root)
             return
-        group = ui.GROUPS[self.current].title
+        group = self._view_heading(view)[0]
         path = filedialog.asksaveasfilename(parent=self.root, title="Export list", defaultextension=".csv",
                                             initialfile=f"Dub Checker - {group}.csv",
                                             filetypes=[("CSV file (Excel)", "*.csv")])
@@ -1265,15 +1394,15 @@ class App:
             with open(path, "w", newline="", encoding="utf-8-sig") as fh:
                 import csv  # only needed here
                 writer = csv.writer(fh)
-                writer.writerow(["Group", "Show", "Season", "Matched on AniList", "AniList page", "Episodes",
-                                 "Dual audio", "Original language only", "Dub confirmed by", "Match %", "Notes",
-                                 "Folder"])
+                writer.writerow(["Group", "Show", "Season", "Matched on AniList", "AniList page", "Air status",
+                                 "Episodes", "Dual audio", "Original language only", "Dub confirmed by", "Match %",
+                                 "Notes", "Folder"])
                 for row in rows:
                     for r in row.seasons:
-                        writer.writerow([group, r.group.show_title, r.group.season_label, ui.anilist_text(r),
-                                         r.match.url if r.match else "", r.episodes, r.dual, r.original_only,
-                                         ui.confirmed_text(r), ui.match_text(r), ui.notes_text(r),
-                                         r.group.folder_name])
+                        writer.writerow([r.category.value, r.group.show_title, r.group.season_label,
+                                         ui.anilist_text(r), r.match.url if r.match else "", ui.air_status_text(r),
+                                         r.episodes, r.dual, r.original_only, ui.confirmed_text(r), ui.match_text(r),
+                                         ui.notes_text(r), r.group.folder_name])
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"Couldn't save the file:\n{exc}", parent=self.root)
             return

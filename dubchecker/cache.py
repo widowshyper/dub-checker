@@ -63,14 +63,21 @@ class Cache:
     # ------------------------------------------------------------ AniList
 
     def get_anilist(self, key: str, max_age_days: float) -> Any:
+        return self.get_anilist_with_age(key, max_age_days)[0]
+
+    def get_anilist_with_age(self, key: str, max_age_days: float) -> tuple[Any, float]:
+        """(saved answer or MISSING, its age in days)."""
         with self._lock:
             row = self._conn.execute("SELECT response, fetched_at FROM anilist WHERE key = ?", (key,)).fetchone()
-        if row is None or time.time() - row[1] > max_age_days * 86400:
-            return MISSING
+        if row is None:
+            return MISSING, 0.0
+        age_days = (time.time() - row[1]) / 86400
+        if age_days > max_age_days:
+            return MISSING, age_days
         try:
-            return json.loads(row[0])
+            return json.loads(row[0]), age_days
         except ValueError:
-            return MISSING
+            return MISSING, age_days
 
     def save_anilist(self, key: str, response: Any) -> None:
         with self._lock:

@@ -42,17 +42,18 @@ class FakeProber:
 class FakeLookup:
     """Every season matches with 100 % confidence; ``dub`` sets what the AniList cast list says."""
 
-    def __init__(self, log: list, dub: bool | None = True, on_lookup=None) -> None:
+    def __init__(self, log: list, dub: bool | None = True, on_lookup=None, air_status: str = "") -> None:
         self.log = log
         self.dub = dub
         self.on_lookup = on_lookup
+        self.air_status = air_status
 
     def lookup(self, group: ShowGroup, override_id: int | None = None) -> LookupResult:
         self.log.append(("lookup", group.key))
         if self.on_lookup:
             self.on_lookup(group)
         match = AniListMatch(override_id or 1, f"{group.show_title} (AniList)", confidence=100,
-                             manual=bool(override_id))
+                             manual=bool(override_id), air_status=self.air_status)
         return LookupResult(match, self.dub, None)
 
 
@@ -63,7 +64,7 @@ def make_pipeline(data: Path, cache: Cache, prober, lookup, config: Config | Non
     def emit(kind: str, *payload) -> None:
         events.append((kind, *payload))
 
-    pipeline = ScanPipeline(config or Config(probe_workers=2), cache, overrides or Overrides(data / "overrides.json"),
+    pipeline = ScanPipeline(config or Config(probe_workers=2, check_air_status=False), cache, overrides or Overrides(data / "overrides.json"),
                             prober, lambda: lookup, emit, cancel or threading.Event())
     return pipeline, events
 
