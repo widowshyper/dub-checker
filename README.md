@@ -82,6 +82,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
   - Click a tab to select it and click it again to deselect it. Several can be selected at once, and their shows are listed together with a **Group** column saying where each season is. With none selected, every show is listed.
   - **Move a tab** by dragging it left or right, or right-click it and choose **Move left** or **Move right**. The order is remembered.
   - **Hide a tab** by unticking it in the **Show tabs** row above the tabs, or right-click it and choose **Hide this tab**. Tick it again to bring it back. Hidden tabs stay hidden after a restart.
+- **English Only tab and English only column:** the English Only tab lists seasons with episodes that only have English audio, so the original language (Japanese, Korean or Chinese) is missing. Replace them with dual-audio releases to get both. Like Airing, it cuts across the other groups, and the **English only** column counts these episodes in every tab.
 - **Airing tab and Air status column:** these show whether a show is still airing, not out yet, on hiatus, finished or cancelled, with the next episode's date while it airs (for example "Airing - ep 8 on 3 Oct"). The Airing tab lists shows that are still airing or not out yet, where an English dub may still be on its way. It cuts across the other groups. Click the **Air status** header to sort airing shows first.
 - A show with several seasons is a bold row. **To open or close a show or a season**, you can:
   - click its ► arrow, or anywhere on its coloured audio bar;
@@ -89,7 +90,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
   - press Enter, Space or the Right/Left arrow keys.
 
   The row under the pointer is highlighted, and the pointer turns into a hand wherever a click will open something.
-- **Every season drops down to its episodes**, listing each episode file. A ✓ under **Dual audio** or **Original only** shows which is which, the row is coloured to match, and Notes says e.g. "Japanese only", "Korean + English" or which track has no language. Opened seasons and shows are remembered after a restart.
+- **Every season drops down to its episodes**, listing each episode file. A ✓ under **Dual audio**, **Original only** or **English only** shows which is which, the row is coloured to match, and Notes says e.g. "Japanese only", "Korean + English" or which track has no language. Opened seasons and shows are remembered after a restart.
 - **The Audio column** is a coloured bar with one block per episode, in episode order, so you can see at a glance where the gaps are. The key above the table explains the colours:
   - green: dual audio (original language + English);
   - blue: English only;
@@ -106,7 +107,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
   - **Wrong show? Fix the match...** lets you paste the right AniList address, and only that season is checked again.
   - **Open file location** (after a Local files scan) opens the season's folder in Explorer with its first episode selected; on a show row it opens the show's folder. In the episode window, right-click a file to open its location.
   - **Open in Sonarr** (when Sonarr is set up) opens the show's page in Sonarr in your web browser. The show is found the same way as for the replacement search below: by its folder name, then its title. It works after a Local files scan too.
-  - **Search for replacements in Sonarr...** (when Sonarr is set up) asks Sonarr to look for new releases of the episodes that only have the original-language audio. On an episode row it searches for just that episode. See [Sonarr](#sonarr).
+  - **Search for replacements in Sonarr...** (when Sonarr is set up) asks Sonarr to look for new releases of the episodes that only have the original-language audio. When a season has English-only episodes, **Search for dual-audio replacements of the English-only episodes in Sonarr...** does the same for those. On an episode row it searches for just that episode. See [Sonarr](#sonarr).
   - **Search Nyaa for "... dual audio"** opens [nyaa.si](https://nyaa.si/) in your web browser, searching the Anime category for the show's name plus "dual audio", most seeders first. If AniList knows the show by another name (such as its romaji title, which many releases use), that search is offered too. The episode window has the same search as a button. Dub Checker only opens the search page; it doesn't download anything.
 - **Search** (Ctrl+F) narrows the list by name; Esc clears it.
 - **Air status** (the drop-down next to Search) lists only seasons that are Airing, Not yet aired, On hiatus, Finished, Cancelled or Not checked. It's hidden when air status is off.
@@ -147,7 +148,7 @@ Choose **Scan from: Sonarr**, then open **Sonarr settings...**:
 
 **Searching for replacements.** Right-click a season or show (or use the button in the episode window) and choose **Search for replacements in Sonarr...**. Dub Checker finds the series in Sonarr by its folder name (or its title), matches your Japanese-only episodes to Sonarr's by file name, and starts an *EpisodeSearch* for exactly those episodes. If none can be matched (for example, the files were renamed since), it searches the whole season instead. This works after a Sonarr scan and after a Local files scan of a library Sonarr manages. Progress shows up on Sonarr's Activity page.
 
-Sonarr only replaces a file when it finds a release it rates higher under your quality profile. To make it prefer dual-audio or English releases, give them a higher score with a custom format in Sonarr.
+Sonarr only replaces a file when it finds a release it rates higher under your quality profile. To make it prefer dual-audio or English releases, give them a higher score with a custom format in Sonarr. For English-only episodes, score dual-audio releases higher.
 
 Works with Sonarr v3, v4 and v5 (API v3). Manual matches are shared between folder scans and Sonarr scans because both use the series folder name.
 

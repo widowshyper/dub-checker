@@ -46,11 +46,17 @@ GROUPS: dict[Category, GroupInfo] = {
         "amber", "Nothing to check - Dub Checker was sure about everything."),
 }
 
-# The tabs: the four groups (by Category name) plus Airing, which cuts across them.
+# The tabs: the four groups (by Category name) plus English Only and Airing, which cut across them.
+ENGLISH_ONLY = "ENGLISH_ONLY"
 AIRING = "AIRING"
-TAB_IDS: tuple[str, ...] = (*(c.name for c in Category), AIRING)
+TAB_IDS: tuple[str, ...] = (*(c.name for c in Category), ENGLISH_ONLY, AIRING)
+CROSS_TABS = frozenset({ENGLISH_ONLY, AIRING})  # a season can be in one of these as well as its group
 TABS: dict[str, GroupInfo] = {
     **{c.name: info for c, info in GROUPS.items()},
+    ENGLISH_ONLY: GroupInfo(
+        "English Only", "Some episodes only have English audio. Replace them with dual-audio releases to get the "
+                        "original language back too.",
+        "blue", "Nothing here - no episode is missing its original-language audio."),
     AIRING: GroupInfo(
         "Airing", "Still airing or not out yet, so an English dub may still be on its way.",
         "purple", "Nothing airing - or air status hasn't been checked yet. Scan again, or choose where it comes "
@@ -76,6 +82,7 @@ def air_matches(r: ShowResult, air_filter: str) -> bool:
         return True
     status = r.air.status if r.air and r.air.status else "NONE"
     return status == air_filter
+
 
 STATUS_COLORS: dict[FileStatus, str] = {  # palette keys, used for the audio bars and episode rows
     FileStatus.DUAL: "green",
@@ -173,7 +180,9 @@ def in_tabs(r: ShowResult, tabs: set[str]) -> bool:
     """Whether a season is listed when these tabs are selected. No tabs selected lists everything."""
     if not tabs:
         return True
-    return r.category.name in tabs or (AIRING in tabs and r.air is not None and r.air.still_airing)
+    return (r.category.name in tabs
+            or (ENGLISH_ONLY in tabs and r.english_only > 0)
+            or (AIRING in tabs and r.air is not None and r.air.still_airing))
 
 
 def air_status_text(r: ShowResult, now: float | None = None) -> str:
@@ -291,8 +300,9 @@ class ResultsModel:
                 continue
             for name in {s.category.name for s in seasons}:
                 counts[name] += 1
-            if any(in_tabs(s, {AIRING}) for s in seasons):
-                counts[AIRING] += 1
+            for tab in CROSS_TABS:
+                if any(in_tabs(s, {tab}) for s in seasons):
+                    counts[tab] += 1
         return counts
 
     def rows(self, tabs: set[str], filter_text: str = "", air_filter: str = "all") -> list[ShowRow]:
@@ -412,6 +422,11 @@ def nyaa_titles(results: list[ShowResult]) -> list[str]:
 def original_only_files(results: list[ShowResult]) -> list[str]:
     """File names of the episodes that need English audio."""
     return [f.name for r in results for f in r.files if f.status is FileStatus.ORIGINAL_ONLY]
+
+
+def english_only_files(results: list[ShowResult]) -> list[str]:
+    """File names of the episodes that need their original-language audio back (a dual-audio release)."""
+    return [f.name for r in results for f in r.files if f.status is FileStatus.ENGLISH_ONLY]
 
 
 def episode_label(f: FileResult) -> str:

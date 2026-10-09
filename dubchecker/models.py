@@ -254,3 +254,7 @@ class ShowResult:
     @property
     def original_only(self) -> int:
         return self.count(FileStatus.ORIGINAL_ONLY)
+
+    @property
+    def english_only(self) -> int:
+        return self.count(FileStatus.ENGLISH_ONLY)

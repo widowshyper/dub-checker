@@ -42,19 +42,20 @@ COLUMNS = (
     ("episodes", "Episodes", 70, False),
     ("dual", "Dual audio", 90, False),
     ("orig", "Original only", 105, False),
+    ("eng", "English only", 95, False),
     ("confirmed", "Dub confirmed by", 160, False),
     ("match", "Match %", 70, False),
     ("notes", "Notes", 220, True),
     ("group", "Group", 140, False),  # only shown when several groups are listed together
 )
-NUMERIC_COLUMNS = frozenset({"audio", "episodes", "dual", "orig", "match"})
+NUMERIC_COLUMNS = frozenset({"audio", "episodes", "dual", "orig", "eng", "match"})
 BAR_WIDTH, BAR_HEIGHT = 96, 11  # the audio bar in the first column, at 100 % scaling
 DRAG_THRESHOLD = 10  # pixels (at 100 %) a tab must move before a press counts as dragging, not clicking
 # Episode rows: only the episodes that need attention are coloured; the square in the Audio column
 # already shows every episode's colour, so full-colour text on every row was just noise.
 EPISODE_TEXT_COLORS: dict[FileStatus, str] = {
     FileStatus.DUAL: "fg",
-    FileStatus.ENGLISH_ONLY: "fg",
+    FileStatus.ENGLISH_ONLY: "blue",
     FileStatus.ORIGINAL_ONLY: "red",
     FileStatus.UNLABELED: "amber",
     FileStatus.ERROR: "muted",
@@ -1043,10 +1044,10 @@ class App:
             return f"{indent}{text}"
         return f"{indent}{ARROW_OPEN if is_open else ARROW_CLOSED}  {text}"
 
-    # The value tuples follow COLUMNS: show, anilist, air, episodes, dual, orig, confirmed, match, notes, group.
+    # The value tuples follow COLUMNS: show, anilist, air, episodes, dual, orig, eng, confirmed, match, notes, group.
 
     def _season_values(self, r: ShowResult, label: str) -> tuple:
-        return (label, ui.anilist_text(r), ui.air_status_text(r), r.episodes, r.dual, r.original_only,
+        return (label, ui.anilist_text(r), ui.air_status_text(r), r.episodes, r.dual, r.original_only, r.english_only,
                 ui.confirmed_text(r), ui.match_text(r), ui.notes_text(r), r.category.value)
 
     def _parent_values(self, row: ui.ShowRow, label: str) -> tuple:
@@ -1060,14 +1061,15 @@ class App:
                 groups.append(s.category.value)
         speaker = ui.show_air_status(row.all_seasons)
         return (label, row.seasons_text(), ui.air_status_text(speaker) if speaker else "-", row.total("episodes"),
-                row.total("dual"), row.total("original_only"), ", ".join(sources) or "-", "", row.also_text(),
+                row.total("dual"), row.total("original_only"), row.total("english_only"), ", ".join(sources) or "-", "", row.also_text(),
                 ", ".join(groups))
 
     @staticmethod
     def _episode_values(f: FileResult, label: str) -> tuple:
         tick = "✓"
         return (label, "", "", "", tick if f.status is FileStatus.DUAL else "",
-                tick if f.status is FileStatus.ORIGINAL_ONLY else "", "", "", ui.episode_note(f), "")
+                tick if f.status is FileStatus.ORIGINAL_ONLY else "", tick if f.status is FileStatus.ENGLISH_ONLY else "",
+                "", "", ui.episode_note(f), "")
 
     def _sort_value(self, row: ui.ShowRow, column: str) -> Any:
         first = row.seasons[0]
@@ -1079,6 +1081,8 @@ class App:
             return row.total("dual")
         if column == "orig":
             return row.total("original_only")
+        if column == "eng":
+            return row.total("english_only")
         if column == "match":
             return min((s.match.confidence if s.match else -1.0) for s in row.seasons)
         if column == "anilist":
@@ -1124,7 +1128,7 @@ class App:
         self.group_title.configure(text=title)
         self.group_description.configure(text=description)
         # The Group column is only needed when seasons from different groups are listed together.
-        mixed = len(view) != 1 or ui.AIRING in view
+        mixed = len(view) != 1 or bool(view & ui.CROSS_TABS)
         tree.configure(displaycolumns=[c[0] for c in COLUMNS
                                        if (mixed or c[0] != "group") and (self.air_status_on or c[0] != "air")])
 
@@ -1373,11 +1377,10 @@ class App:
         self.tree.focus(iid)
         menu = tk.Menu(self.root, tearoff=False)
         result = self._result_for(iid)
-        files: list[str] | None = None  # None = all of the Japanese/Korean/Chinese-only episodes in view
-        if (episode := self._file_for(iid)) is not None and result is not None:
+        episode = self._file_for(iid)
+        if episode is not None and result is not None:
             key = result.key
             seasons = [result]
-            files = [episode.name] if episode.status is FileStatus.ORIGINAL_ONLY else []
             menu.add_command(label="Open episode window", command=lambda: self.show_details(key, episode))
             if self.results_are_local:
                 menu.add_command(label="Open file location", command=lambda: self.open_location_of_file(episode.path))
@@ -1409,13 +1412,9 @@ class App:
             title = self.titles.get(iid, ("", iid[2:]))[1]
         show_id = result.group.folder_name if result is not None else iid[2:]
         if self.sonarr_configured:
-            wanted = ui.original_only_files(seasons) if files is None else files
-            label = "Search for a replacement in Sonarr..." if files is not None else \
-                "Search for replacements in Sonarr..."
             menu.add_separator()
             menu.add_command(label="Open in Sonarr", command=lambda: self.open_in_sonarr(show_id, title))
-            menu.add_command(label=label, command=lambda: self.search_sonarr(seasons, wanted),
-                             state="normal" if wanted else "disabled")
+            self._add_sonarr_searches(menu, seasons, episode)
         menu.add_separator()
         for name in ui.nyaa_titles(seasons):
             menu.add_command(label=f"Search Nyaa for “{ui.nyaa_query(name)}”",
@@ -1428,6 +1427,26 @@ class App:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _add_sonarr_searches(self, menu: tk.Menu, seasons: list[ShowResult], episode: FileResult | None) -> None:
+        """The replacement searches: for episodes missing English (original language only), and for episodes
+        missing the original language (English only). On an episode row, just that episode."""
+        if episode is not None:
+            english = episode.status is FileStatus.ENGLISH_ONLY
+            wanted = [episode.name] if episode.status in (FileStatus.ORIGINAL_ONLY, FileStatus.ENGLISH_ONLY) else []
+            menu.add_command(label="Search for a dual-audio replacement in Sonarr..." if english
+                             else "Search for a replacement in Sonarr...",
+                             command=lambda: self.search_sonarr(seasons, wanted, english),
+                             state="normal" if wanted else "disabled")
+            return
+        original, english = ui.original_only_files(seasons), ui.english_only_files(seasons)
+        if original or not english:
+            menu.add_command(label="Search for replacements in Sonarr...",
+                             command=lambda: self.search_sonarr(seasons, original),
+                             state="normal" if original else "disabled")
+        if english:
+            menu.add_command(label="Search for dual-audio replacements of the English-only episodes in Sonarr...",
+                             command=lambda: self.search_sonarr(seasons, english, english=True))
 
     def _seasons_in_view(self, parent_iid: str) -> list[ShowResult]:
         """The seasons listed under a show row with the tabs selected now."""
@@ -1513,25 +1532,27 @@ class App:
         self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
         thread.start()
 
-    def search_sonarr(self, seasons: list[ShowResult], files: list[str] | None = None) -> None:
-        """Ask Sonarr to look for new releases of episodes that only have the original-language audio.
+    def search_sonarr(self, seasons: list[ShowResult], files: list[str] | None = None, english: bool = False) -> None:
+        """Ask Sonarr to look for new releases of episodes that only have the original-language audio, or
+        (``english``) only English audio.
 
         ``files`` limits it to those file names (one episode); by default it's all of them in ``seasons``.
         """
-        files = ui.original_only_files(seasons) if files is None else files
+        if files is None:
+            files = ui.english_only_files(seasons) if english else ui.original_only_files(seasons)
         if not seasons or not files:
             return
         group = seasons[0].group
         labels = ", ".join(s.group.season_label for s in seasons if s.group.season_label)
         what = f"{group.show_title}{f' ({labels})' if labels else ''}"
         wanted = set(files)
-        language = language_word([f for s in seasons for f in s.files if f.name in wanted])
+        language = "English" if english else language_word([f for s in seasons for f in s.files if f.name in wanted])
+        prefer = "dual-audio releases" if english else "dual-audio or English releases"
         episodes = f"episode “{files[0]}”" if len(files) == 1 else ui.plural(len(files), "episode")
         question = (f"Ask Sonarr to search for new releases of the {episodes} of {what} that only "
                     f"{'has' if len(files) == 1 else 'have'} {language} audio?\n\nSonarr replaces a file only when "
-                    "it finds a release it rates "
-                    "higher under your quality profile. To make it prefer dual-audio or English releases, give them "
-                    "a higher score with a custom format in Sonarr.")
+                    "it finds a release it rates higher under your quality profile. To make it prefer "
+                    f"{prefer}, give them a higher score with a custom format in Sonarr.")
         if not messagebox.askyesno(APP_NAME, question, parent=self.root):
             return
         self.status_var.set(f"Asking Sonarr to search for {what}...")
@@ -1633,13 +1654,15 @@ class App:
                 import csv  # only needed here
                 writer = csv.writer(fh)
                 writer.writerow(["Group", "Show", "Season", "Matched on AniList", "AniList page", "Air status",
-                                 "Episodes", "Dual audio", "Original language only", "Dub confirmed by", "Match %",
+                                 "Episodes", "Dual audio", "Original language only", "English only", "Dub confirmed by",
+                                 "Match %",
                                  "Notes", "Folder"])
                 for row in rows:
                     for r in row.seasons:
                         writer.writerow([r.category.value, r.group.show_title, r.group.season_label,
                                          ui.anilist_text(r), r.match.url if r.match else "", ui.air_status_text(r),
-                                         r.episodes, r.dual, r.original_only, ui.confirmed_text(r), ui.match_text(r),
+                                         r.episodes, r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
+                                         ui.match_text(r),
                                          ui.notes_text(r), r.group.folder_name])
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"Couldn't save the file:\n{exc}", parent=self.root)

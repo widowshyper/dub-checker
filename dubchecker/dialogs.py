@@ -163,6 +163,10 @@ class EpisodeDetailsDialog(Dialog):
         if app.sonarr_configured and ui.original_only_files([result]):
             ttk.Button(buttons, text="Search for replacements in Sonarr...",
                        command=lambda: app.search_sonarr([result])).pack(side="left", padx=(0, self.px(8)))
+        if app.sonarr_configured and ui.english_only_files([result]):
+            ttk.Button(buttons, text="Search Sonarr for dual-audio versions of the English-only episodes...",
+                       command=lambda: app.search_sonarr([result], english=True)).pack(side="left",
+                                                                                       padx=(0, self.px(8)))
         ttk.Button(buttons, text="Fix match...", command=self._fix).pack(side="left")
         open_button = ttk.Button(buttons, text="Open AniList page",
                                  command=lambda: result.match and ui.open_url(result.match.url))

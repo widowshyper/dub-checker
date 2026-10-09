@@ -17,7 +17,7 @@ class TabOrderTests(unittest.TestCase):
     def test_saved_order_is_kept_and_new_tabs_are_added(self) -> None:
         self.assertEqual(ui.ordered_tabs([]), list(ui.TAB_IDS))
         self.assertEqual(ui.ordered_tabs(["AIRING", "CHECK", "nonsense", "CHECK"]),
-                         ["AIRING", "CHECK", "NEEDS_DUB", "NO_DUB", "FULLY_DUBBED"])
+                         ["AIRING", "CHECK", "NEEDS_DUB", "NO_DUB", "FULLY_DUBBED", "ENGLISH_ONLY"])
 
 
 class AirFilterModelTests(unittest.TestCase):
@@ -116,9 +116,9 @@ class WindowTests(unittest.TestCase):
     def test_move_left_and_right_is_remembered(self) -> None:
         app = self.app
         app.move_tab("AIRING", -1)
-        self.assertEqual(app.visible_tabs(), ["NEEDS_DUB", "NO_DUB", "FULLY_DUBBED", "AIRING", "CHECK"])
-        self.assertEqual(int(app.cards["AIRING"].grid_info()["column"]), 3)
-        self.assertEqual(self.checks_order()[3], "Airing")  # the tick boxes follow
+        self.assertEqual(app.visible_tabs(), ["NEEDS_DUB", "NO_DUB", "FULLY_DUBBED", "CHECK", "AIRING", "ENGLISH_ONLY"])
+        self.assertEqual(int(app.cards["AIRING"].grid_info()["column"]), 4)
+        self.assertEqual(self.checks_order()[4], "Airing")  # the tick boxes follow
         app.move_tab("NEEDS_DUB", 1)
         self.assertEqual(self.saved()["tab_order"][:2], ["NO_DUB", "NEEDS_DUB"])
         app.move_tab("NO_DUB", -1)  # already first: nothing happens
@@ -140,7 +140,7 @@ class WindowTests(unittest.TestCase):
         app.card_drag("CHECK", SimpleNamespace(x_root=150))  # over the first tab's right half
         self.assertTrue(app.cards["CHECK"].dragging)
         app.card_release("CHECK", SimpleNamespace(x_root=150))
-        self.assertEqual(app.visible_tabs(), ["NEEDS_DUB", "CHECK", "NO_DUB", "FULLY_DUBBED", "AIRING"])
+        self.assertEqual(app.visible_tabs(), ["NEEDS_DUB", "CHECK", "NO_DUB", "FULLY_DUBBED", "ENGLISH_ONLY", "AIRING"])
         self.assertEqual(app.tabs, {"NEEDS_DUB"})  # not selected by the drag
         self.assertFalse(app.cards["CHECK"].dragging)
         self.assertEqual(self.saved()["tab_order"][:2], ["NEEDS_DUB", "CHECK"])
@@ -156,7 +156,7 @@ class WindowTests(unittest.TestCase):
         app.set_tab_visible("NO_DUB", False)
         app.move_tab("FULLY_DUBBED", -1)
         self.assertEqual(ui.ordered_tabs(self.ctx.config.tab_order),
-                         ["FULLY_DUBBED", "NO_DUB", "NEEDS_DUB", "CHECK", "AIRING"])
+                         ["FULLY_DUBBED", "NO_DUB", "NEEDS_DUB", "CHECK", "ENGLISH_ONLY", "AIRING"])
 
     # ---------------------------------------------------------------- tick boxes
 

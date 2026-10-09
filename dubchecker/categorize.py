@@ -28,6 +28,13 @@ def file_notes(files: list[FileResult]) -> list[str]:
         language = language_word([f for f in files if f.status is FileStatus.ORIGINAL_ONLY])
         notes.append(f"{n} of {total} episodes only have {language} audio" if total > 1
                      else f"The episode only has {language} audio")
+    if counts[FileStatus.ENGLISH_ONLY]:  # no original-language audio: a dual-audio release would add it back
+        n = counts[FileStatus.ENGLISH_ONLY]
+        if total == 1:
+            notes.append("The episode only has English audio")
+        else:
+            notes.append("Every episode only has English audio" if n == total
+                         else f"{n} of {total} episodes only have English audio")
     if counts[FileStatus.UNLABELED]:
         n = counts[FileStatus.UNLABELED]
         notes.append(f"{_plural(n, 'file')} {'has' if n == 1 else 'have'} audio without a language label "

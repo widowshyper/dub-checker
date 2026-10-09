@@ -46,6 +46,11 @@ your web browser.
 Sonarr only swaps a file for a release it rates higher, so give dual-audio
 releases a higher score with a custom format in Sonarr.
 
+The English Only tab lists seasons with episodes that only have English audio,
+so the original language is missing - replace those with dual-audio releases.
+Right-click one and choose "Search for dual-audio replacements of the
+English-only episodes in Sonarr..." (when Sonarr is set up).
+
 Click a tab at the top to select or deselect it; several can be selected at once,
 and with none selected every show is listed. Drag a tab left or right to move
 it. Untick a tab in the "Show tabs" row to hide it, and tick it to bring it
