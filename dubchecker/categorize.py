@@ -6,7 +6,7 @@ from collections import Counter
 from dubchecker.dub_sources import SOURCE_FILES, LookupResult, combine_dub_signals
 from dubchecker.models import (AniListMatch, Category, DubInfo, FileResult, FileStatus, ShowGroup, ShowResult,
                                language_word)
-from dubchecker.sonarr import TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB
+from dubchecker.sonarr import TAG_DUAL_AUDIO, TAG_ENGLISH_ONLY, TAG_MISSING_DUB, TAG_NO_DUB
 
 STOPPED_NOTE = "Scan was stopped before this show was checked"
 
@@ -106,9 +106,10 @@ def dub_tag(seasons: list[ShowResult]) -> str | None:
       of a show AniList or the MAL-Dubs list says is dubbed).
     * "no-dub": original-only episodes with no English dub to get (a season in No Dub Exists).
     * "dual-audio": every episode has both the original language and English.
+    * "english-only": every episode has English, but some have only English (no original language), so
+      dual-audio releases would add it back.
 
-    A show with anything to check manually (or a scan stopped before it) gets none, and so does one whose
-    English episodes are English only, which none of the rules describe.
+    A show with anything to check manually (or a scan stopped before it) gets none.
     """
     if not seasons or any(s.category is Category.CHECK or s.stopped for s in seasons):
         return None
@@ -116,8 +117,11 @@ def dub_tag(seasons: list[ShowResult]) -> str | None:
         return TAG_MISSING_DUB
     if any(s.category is Category.NO_DUB for s in seasons):
         return TAG_NO_DUB
-    if all(f.status is FileStatus.DUAL for s in seasons for f in s.files):
+    statuses = {f.status for s in seasons for f in s.files}
+    if statuses == {FileStatus.DUAL}:
         return TAG_DUAL_AUDIO
+    if FileStatus.ENGLISH_ONLY in statuses:
+        return TAG_ENGLISH_ONLY
     return None
 
 

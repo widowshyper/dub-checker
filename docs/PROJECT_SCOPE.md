@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 2.8.0
+**Version:** 2.8.1
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -61,7 +61,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 - Clear saved online info.
 
 **Sonarr tags**
-- Tag shows `dual-audio`, `missing-dub` or `no-dub` in Sonarr, on demand or after every scan.
+- Tag shows `dual-audio`, `missing-dub`, `no-dub` or `english-only` in Sonarr, on demand or after every scan.
 
 ## How it works
 

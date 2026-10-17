@@ -159,15 +159,17 @@ Choose **Scan from: Sonarr**, then open **Sonarr settings...**:
 
 **Searching for replacements.** Right-click a season or show (or use the button in the episode window) and choose **Search for replacements in Sonarr...**. Dub Checker finds the series in Sonarr by its folder name (or its title), matches your Japanese-only episodes to Sonarr's by file name, and starts an *EpisodeSearch* for exactly those episodes. If none can be matched (for example, the files were renamed since), it searches the whole season instead. This works after a Sonarr scan and after a Local files scan of a library Sonarr manages. Progress shows up on Sonarr's Activity page.
 
-**Tagging shows in Sonarr.** **Tag shows in Sonarr...** (next to Clear results, once Sonarr is set up) gives each show one of three Sonarr tags, so you can filter by them in Sonarr or use them in its custom formats and lists:
+**Tagging shows in Sonarr.** **Tag shows in Sonarr...** (next to Clear results, once Sonarr is set up) gives each show one of four Sonarr tags, so you can filter by them in Sonarr or use them in its custom formats and lists:
 
 | Tag | When |
 |---|---|
 | `dual-audio` | Every episode has both the original language and English. |
 | `missing-dub` | An English dub exists, but some episodes only have the original language. That covers a mix of dual-audio and original-only episodes, and original-only episodes of a show AniList or the MAL-Dubs list says is dubbed (the Needs English Audio group). |
 | `no-dub` | Original-only episodes with no English dub to get (the No Dub Exists group). A show with a dubbed season and a season with no dub yet is `no-dub`. |
+| `english-only` | Every episode has English, but some have only English, with no original-language track (see the English Only tab). Dual-audio releases would add the original language back. |
 
-- A show gets no tag when something needs checking manually, when a scan was stopped before it, or when its English episodes are English only, since none of the rules describe that.
+- Each show gets one tag. `missing-dub` and `no-dub` win over `english-only`, because a missing dub is the bigger gap.
+- A show gets no tag when something needs checking manually, or when a scan was stopped before it.
 - A show whose tag changes loses its old one. Your other Sonarr tags aren't touched, and nor are dismissed shows or shows Sonarr doesn't have.
 - The tags are created in Sonarr the first time they're needed.
 - Shows are matched to Sonarr by folder name, then title, so this works after a Local files scan too.
@@ -223,7 +225,7 @@ Everything is in `UserData/` next to the program:
 | `air_filter` | `all` | The Air status drop-down: `all`, `RELEASING`, `NOT_YET_RELEASED`, `HIATUS`, `FINISHED`, `CANCELLED` or `NONE` |
 | `sonarr_url` / `sonarr_api_key_encrypted` | | Sonarr connection (the key is `sonarr_api_key` in plain text off Windows) |
 | `sonarr_anime_only` / `sonarr_read_unknown` | on / on | Sonarr options |
-| `sonarr_tag_after_scan` | off | Tag shows dual-audio / missing-dub / no-dub in Sonarr after every scan |
+| `sonarr_tag_after_scan` | off | Tag shows dual-audio / missing-dub / no-dub / english-only in Sonarr after every scan |
 | `sonarr_path_from` / `sonarr_path_to` | | Path mapping |
 
 To reset, close the app and delete the files you want to start over with (or all of `UserData`).

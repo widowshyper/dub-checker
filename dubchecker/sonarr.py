@@ -241,7 +241,8 @@ class SeriesIndex:
 # ---------------------------------------------------------------- dub tags
 
 TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB = "dual-audio", "missing-dub", "no-dub"
-DUB_TAGS = (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB)
+TAG_ENGLISH_ONLY = "english-only"
+DUB_TAGS = (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, TAG_ENGLISH_ONLY)
 
 
 @dataclass
@@ -260,10 +261,10 @@ class TagReport:
 
 
 def apply_dub_tags(client: SonarrClient, wanted: dict[tuple[str, str], str | None]) -> TagReport:
-    """Give each show its dub tag in Sonarr and take the other two away.
+    """Give each show its dub tag in Sonarr and take the others away.
 
-    ``wanted`` maps (folder name, title) to "dual-audio", "missing-dub", "no-dub", or None for a show that
-    should have none of them (e.g. one to check manually). Only these three tags are touched, and only on
+    ``wanted`` maps (folder name, title) to one of ``DUB_TAGS``, or None for a show that should have none
+    of them (e.g. one to check manually). Only these tags are touched, and only on
     shows in ``wanted``. The tags are created in Sonarr if they don't exist yet.
     """
     index = SeriesIndex(client.series())

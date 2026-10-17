@@ -529,8 +529,9 @@ class SettingsDialog(Dialog):
             ttk.Checkbutton(page, text=text, variable=variable).grid(
                 row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
         self._hint(page, "Tags each show dual-audio (every episode has both languages), missing-dub (an English "
-                         "dub exists but some episodes don't have it) or no-dub (no English dub exists). You can "
-                         "also do it any time with Tag shows in Sonarr... in the main window.")
+                         "dub exists but some episodes don't have it), no-dub (no English dub exists) or "
+                         "english-only (some episodes have English but not the original language). You can also do "
+                         "it any time with Tag shows in Sonarr... in the main window.")
 
         self._heading(page, "Path mapping")
         self._hint(page, "Only needed if Sonarr runs on another computer or in Docker and sees your files at a "

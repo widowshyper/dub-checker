@@ -54,8 +54,14 @@ class RuleTests(unittest.TestCase):
     def test_no_tag_when_unsure_or_outside_the_rules(self) -> None:
         self.assertIsNone(dub_tag([local("A", 1, D, U)]))  # unlabeled audio: Check Manually
         self.assertIsNone(dub_tag([local("A", 1, D, D), stopped_result(*files("A", 2, [O]))]))
-        self.assertIsNone(dub_tag([local("A", 1, D, E)]))  # English-only episodes
         self.assertIsNone(dub_tag([]))
+
+    def test_english_only_episodes(self) -> None:
+        self.assertEqual(dub_tag([local("A", 1, D, E)]), "english-only")
+        self.assertEqual(dub_tag([local("A", 1, D, D), looked_up("A", 2, True, E, E)]), "english-only")
+        # A missing dub or no dub is the bigger problem, and a show gets one tag.
+        self.assertEqual(dub_tag([local("A", 1, D, E, O)]), "missing-dub")
+        self.assertEqual(dub_tag([local("A", 1, D, E), looked_up("A", 2, False, O)]), "no-dub")
 
 
 class SonarrTaggingTests(unittest.TestCase):
@@ -84,10 +90,10 @@ class SonarrTaggingTests(unittest.TestCase):
             {"seriesIds": [1], "tags": [ids["no-dub"]], "applyTags": "remove"},  # its old dub tag goes
             {"seriesIds": [1], "tags": [ids["missing-dub"]], "applyTags": "add"},
             {"seriesIds": [3], "tags": [ids["dual-audio"]], "applyTags": "add"}])
-        self.assertEqual(report.tagged, {"dual-audio": 1, "missing-dub": 1, "no-dub": 0})
+        self.assertEqual(report.tagged, {"dual-audio": 1, "missing-dub": 1, "no-dub": 0, "english-only": 0})
         self.assertEqual((report.changed, report.not_in_sonarr), (2, 1))
-        self.assertEqual(report.text(), "Sonarr tags: 1 dual-audio, 1 missing-dub, 0 no-dub (2 shows changed). "
-                                        "1 not found in Sonarr.")
+        self.assertEqual(report.text(), "Sonarr tags: 1 dual-audio, 1 missing-dub, 0 no-dub, 0 english-only "
+                                        "(2 shows changed). 1 not found in Sonarr.")
 
     def test_nothing_changes_when_the_tag_is_already_right(self) -> None:
         report = apply_dub_tags(SonarrClient(self.url, API_KEY), {("Attack on Titan (2013)", "x"): "no-dub"})
@@ -99,7 +105,13 @@ class SonarrTaggingTests(unittest.TestCase):
         self.assertEqual(len(TAGS), 2)  # nothing created that isn't used
 
     def test_tag_names(self) -> None:
-        self.assertEqual(DUB_TAGS, ("dual-audio", "missing-dub", "no-dub"))
+        self.assertEqual(DUB_TAGS, ("dual-audio", "missing-dub", "no-dub", "english-only"))
+
+    def test_english_only_tag_is_created_and_swapped_in(self) -> None:
+        apply_dub_tags(SonarrClient(self.url, API_KEY), {("Attack on Titan (2013)", "x"): "english-only"})
+        self.assertEqual(TAGS[-1]["label"], "english-only")
+        self.assertCountEqual(TAG_EDITS, [{"seriesIds": [1], "tags": [2], "applyTags": "remove"},
+                                          {"seriesIds": [1], "tags": [TAGS[-1]["id"]], "applyTags": "add"}])
 
 
 @unittest.skipUnless(tk_available(), "no display for Tk")
@@ -129,7 +141,7 @@ class WindowTests(unittest.TestCase):
         self.root.withdraw()
         self.app = App(self.root, self.ctx)
         for r in (local("Attack on Titan (2013)", 1, D, O), local("Frieren", 1, D, D),
-                  looked_up("Mystery", 1, False, O)):
+                  looked_up("Mystery", 1, False, O), local("Cowboy Bebop", 1, E, E)):
             self.app.model.add(r)
 
     def tearDown(self) -> None:
@@ -158,8 +170,9 @@ class WindowTests(unittest.TestCase):
         self.assertIn("dual-audio: 1 show", question)
         self.assertIn("missing-dub: 1 show", question)
         self.assertIn("no-dub: 0 shows", question)
-        self.assertEqual(self.app.status_var.get(),
-                         "Sonarr tags: 1 dual-audio, 1 missing-dub, 0 no-dub (2 shows changed).")
+        self.assertIn("english-only: 1 show", question)
+        self.assertEqual(self.app.status_var.get(), "Sonarr tags: 1 dual-audio, 1 missing-dub, 0 no-dub, "
+                                                    "0 english-only (2 shows changed). 1 not found in Sonarr.")
         self.assertEqual(len(TAG_EDITS), 3)
 
     def test_saying_no_changes_nothing(self) -> None:

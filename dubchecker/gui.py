@@ -25,8 +25,8 @@ from dubchecker.models import STATUS_BY_CODE, Category, FileResult, FileStatus, 
 from dubchecker.pipeline import ScanOutcome, ScanPipeline, evaluate_season
 from dubchecker.results_store import SavedScan, delete_scan, load_scan, save_scan
 from dubchecker.categorize import dub_tag
-from dubchecker.sonarr import (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, SonarrClient, SonarrError, apply_dub_tags,
-                               search_for_replacements, series_page_url)
+from dubchecker.sonarr import (TAG_DUAL_AUDIO, TAG_ENGLISH_ONLY, TAG_MISSING_DUB, TAG_NO_DUB, SonarrClient, SonarrError,
+                               apply_dub_tags, search_for_replacements, series_page_url)
 
 log = logging.getLogger(__name__)
 
@@ -1712,15 +1712,17 @@ class App:
             return
         wanted = self.dub_tags_wanted()
         if not automatic:
-            counts = {tag: sum(1 for t in wanted.values() if t == tag) for tag in (TAG_DUAL_AUDIO, TAG_MISSING_DUB,
-                                                                              TAG_NO_DUB, None)}
+            counts = {tag: sum(1 for t in wanted.values() if t == tag)
+                      for tag in (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, TAG_ENGLISH_ONLY, None)}
             question = (
                 "Tag your shows in Sonarr?\n\n"
                 f"{TAG_DUAL_AUDIO}: {ui.plural(counts[TAG_DUAL_AUDIO], 'show')} (every episode has both languages)\n"
                 f"{TAG_MISSING_DUB}: {ui.plural(counts[TAG_MISSING_DUB], 'show')} (an English dub exists, but some "
                 "episodes don't have it)\n"
                 f"{TAG_NO_DUB}: {ui.plural(counts[TAG_NO_DUB], 'show')} (no English dub exists)\n"
-                f"No tag: {ui.plural(counts[None], 'show')} (to check manually, or with English-only episodes)\n\n"
+                f"{TAG_ENGLISH_ONLY}: {ui.plural(counts[TAG_ENGLISH_ONLY], 'show')} (some episodes have English "
+                "but not the original language)\n"
+                f"No tag: {ui.plural(counts[None], 'show')} (something to check manually)\n\n"
                 "A show whose tag changes loses its old one. Your other Sonarr tags aren't touched, and nor are "
                 "dismissed shows or shows Sonarr doesn't have.")
             if not messagebox.askyesno(APP_NAME, question, parent=self.root):

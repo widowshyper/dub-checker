@@ -50,8 +50,9 @@ Sonarr to look for new releases of the episodes that only have the original
 language audio. "Search Nyaa for ... dual audio" opens a search on nyaa.si in
 your web browser.
 "Tag shows in Sonarr..." tags each show dual-audio (every episode has both
-languages), missing-dub (an English dub exists but some episodes lack it) or
-no-dub (no English dub exists). Settings > Sonarr can do this after every scan.
+languages), missing-dub (an English dub exists but some episodes lack it),
+no-dub (no English dub exists) or english-only (some episodes have English but
+not the original language). Settings > Sonarr can do this after every scan.
 Sonarr only swaps a file for a release it rates higher, so give dual-audio
 releases a higher score with a custom format in Sonarr.
 
