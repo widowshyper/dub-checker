@@ -25,6 +25,7 @@ class SonarrSeries:
     status: str = ""                                   # continuing, ended, upcoming or deleted
     seasons: list = field(default_factory=list)        # Sonarr's season list, with per-season statistics
     title_slug: str = ""                               # the series' page in Sonarr: <address>/series/<slug>
+    tags: list = field(default_factory=list)           # Sonarr tag ids
 
 
 def normalise_url(url: str) -> str:
@@ -126,7 +127,8 @@ class SonarrClient:
         return [SonarrSeries(id=int(s["id"]), title=str(s.get("title") or ""), year=s.get("year") or None,
                              path=str(s.get("path") or ""), series_type=str(s.get("seriesType") or "").lower(),
                              status=str(s.get("status") or "").lower(), seasons=list(s.get("seasons") or []),
-                             title_slug=str(s.get("titleSlug") or ""))
+                             title_slug=str(s.get("titleSlug") or ""),
+                             tags=[int(t) for t in s.get("tags") or [] if str(t).isdigit()])
                 for s in self._get("/api/v3/series") or [] if "id" in s]
 
     def calendar(self, start: str, end: str) -> list[dict]:
@@ -142,6 +144,18 @@ class SonarrClient:
     def command(self, name: str, **options: Any) -> dict:
         """Start a Sonarr command such as EpisodeSearch; Sonarr runs it in the background."""
         return self._request("POST", "/api/v3/command", body={"name": name, **options}) or {}
+
+    def tags(self) -> list[dict]:
+        """Every tag in Sonarr: [{"id": 1, "label": "anime"}, ...]."""
+        return list(self._get("/api/v3/tag") or [])
+
+    def create_tag(self, label: str) -> dict:
+        return self._request("POST", "/api/v3/tag", body={"label": label}) or {}
+
+    def edit_series_tags(self, series_ids: list[int], tag_ids: list[int], apply: str) -> None:
+        """Add (``apply="add"``) or remove (``"remove"``) tags on many series at once."""
+        self._request("PUT", "/api/v3/series/editor",
+                      body={"seriesIds": sorted(series_ids), "tags": sorted(tag_ids), "applyTags": apply})
 
     def find_series(self, folder_name: str, title: str = "") -> SonarrSeries | None:
         """The series whose folder has this name (as used by both scan types), else one with the same title."""
@@ -213,15 +227,90 @@ def _timestamp(text: object) -> int | None:
         return None
 
 
-class SonarrAirStatus:
+class SeriesIndex:
+    """Sonarr's series, found the same way as the replacement search: by folder name, then by title."""
+
+    def __init__(self, series: list[SonarrSeries]) -> None:
+        self.by_folder = {last_path_part(s.path).casefold(): s for s in series}
+        self.by_title = {_plain_title(s.title): s for s in series}
+
+    def find(self, folder_name: str, title: str) -> SonarrSeries | None:
+        return self.by_folder.get(folder_name.casefold()) or self.by_title.get(_plain_title(title))
+
+
+# ---------------------------------------------------------------- dub tags
+
+TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB = "dual-audio", "missing-dub", "no-dub"
+DUB_TAGS = (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB)
+
+
+@dataclass
+class TagReport:
+    tagged: dict[str, int] = field(default_factory=lambda: dict.fromkeys(DUB_TAGS, 0))  # shows now under each tag
+    changed: int = 0          # shows whose dub tag was added or changed
+    not_in_sonarr: int = 0    # shows Sonarr doesn't have
+
+    def text(self) -> str:
+        counts = ", ".join(f"{n:,} {tag}" for tag, n in self.tagged.items())
+        changed = f"{self.changed:,} show" + ("" if self.changed == 1 else "s")
+        text = f"Sonarr tags: {counts} ({changed} changed)."
+        if self.not_in_sonarr:
+            text += f" {self.not_in_sonarr:,} not found in Sonarr."
+        return text
+
+
+def apply_dub_tags(client: SonarrClient, wanted: dict[tuple[str, str], str | None]) -> TagReport:
+    """Give each show its dub tag in Sonarr and take the other two away.
+
+    ``wanted`` maps (folder name, title) to "dual-audio", "missing-dub", "no-dub", or None for a show that
+    should have none of them (e.g. one to check manually). Only these three tags are touched, and only on
+    shows in ``wanted``. The tags are created in Sonarr if they don't exist yet.
+    """
+    index = SeriesIndex(client.series())
+    report = TagReport()
+    target: dict[int, tuple[SonarrSeries, str | None]] = {}
+    for (folder, title), tag in wanted.items():
+        series = index.find(folder, title)
+        if series is None:
+            report.not_in_sonarr += 1
+        else:
+            target[series.id] = (series, tag)
+    if not target:
+        return report
+
+    ids = {str(t.get("label", "")).casefold(): int(t["id"]) for t in client.tags() if "id" in t}
+    for label in DUB_TAGS:
+        if label not in ids and any(tag == label for _, tag in target.values()):
+            ids[label] = int(client.create_tag(label)["id"])
+
+    adds: dict[str, list[int]] = {label: [] for label in DUB_TAGS}
+    removes: dict[str, list[int]] = {label: [] for label in DUB_TAGS}
+    for series_id, (series, tag) in target.items():
+        has = {label for label in DUB_TAGS if ids.get(label) in series.tags}
+        if tag:
+            report.tagged[tag] += 1
+            if tag not in has:
+                adds[tag].append(series_id)
+        for label in has - {tag}:
+            removes[label].append(series_id)
+        if has != ({tag} if tag else set()):
+            report.changed += 1
+    for label in DUB_TAGS:
+        if removes[label]:
+            client.edit_series_tags(removes[label], [ids[label]], "remove")
+        if adds[label]:
+            client.edit_series_tags(adds[label], [ids[label]], "add")
+    return report
+
+
+class SonarrAirStatus(SeriesIndex):
     """Air status from Sonarr (Settings > General > Air status > Sonarr): each series' status plus the
     calendar's upcoming episodes. Two requests in total, whatever the size of the library."""
 
     CALENDAR_DAYS = 120
 
     def __init__(self, series: list[SonarrSeries], upcoming: list[dict]) -> None:
-        self.by_folder = {last_path_part(s.path).casefold(): s for s in series}
-        self.by_title = {_plain_title(s.title): s for s in series}
+        super().__init__(series)
         self.next: dict[tuple[int, int], tuple[int | None, int]] = {}  # (series, season) -> (episode, airs at)
         for episode in upcoming:
             when = _timestamp(episode.get("airDateUtc"))
@@ -237,10 +326,6 @@ class SonarrAirStatus:
         end = start + timedelta(days=cls.CALENDAR_DAYS)
         iso = "%Y-%m-%dT%H:%M:%SZ"
         return cls(client.series(), client.calendar(start.strftime(iso), end.strftime(iso)))
-
-    def find(self, folder_name: str, title: str) -> SonarrSeries | None:
-        """Matched the same way as the replacement search: by folder name, then by title."""
-        return self.by_folder.get(folder_name.casefold()) or self.by_title.get(_plain_title(title))
 
     def air(self, folder_name: str, title: str, season: int | None) -> AirInfo | None:
         series = self.find(folder_name, title)

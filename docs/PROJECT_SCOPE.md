@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 2.7.0
+**Version:** 2.8.0
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -60,6 +60,9 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
   - a connection test.
 - Clear saved online info.
 
+**Sonarr tags**
+- Tag shows `dual-audio`, `missing-dub` or `no-dub` in Sonarr, on demand or after every scan.
+
 ## How it works
 
 1. **Read files.** Every episode's audio tracks are read with MediaInfo (ffprobe as a fallback), or taken from Sonarr's media info. Results are cached by path, size and date.
@@ -98,7 +101,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Build and test**
 - PyInstaller (`build.bat`) produces the portable one-folder app and zip.
-- A unittest suite of 270 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
+- A unittest suite of 285 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
 
 ## Out of scope
 

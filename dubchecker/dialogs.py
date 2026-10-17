@@ -376,6 +376,7 @@ class SettingsDialog(Dialog):
         self.sonarr_key = tk.StringVar(value=cfg.sonarr_api_key)
         self.anime_only = tk.BooleanVar(value=cfg.sonarr_anime_only)
         self.read_unknown = tk.BooleanVar(value=cfg.sonarr_read_unknown)
+        self.tag_after_scan = tk.BooleanVar(value=cfg.sonarr_tag_after_scan)
         self.path_from = tk.StringVar(value=cfg.sonarr_path_from)
         self.path_to = tk.StringVar(value=cfg.sonarr_path_to)
         self.schedule_on = tk.BooleanVar(value=cfg.schedule_enabled)
@@ -523,9 +524,13 @@ class SettingsDialog(Dialog):
             self._hint(page, "Your API key was saved on another PC or Windows account, so it can't be read "
                              "here. Please enter it again.")
         for text, variable in (("Only series set to the Anime series type", self.anime_only),
-                               ("Read files myself when Sonarr doesn't know a track's language", self.read_unknown)):
+                               ("Read files myself when Sonarr doesn't know a track's language", self.read_unknown),
+                               ("Tag shows in Sonarr after every scan", self.tag_after_scan)):
             ttk.Checkbutton(page, text=text, variable=variable).grid(
                 row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
+        self._hint(page, "Tags each show dual-audio (every episode has both languages), missing-dub (an English "
+                         "dub exists but some episodes don't have it) or no-dub (no English dub exists). You can "
+                         "also do it any time with Tag shows in Sonarr... in the main window.")
 
         self._heading(page, "Path mapping")
         self._hint(page, "Only needed if Sonarr runs on another computer or in Docker and sees your files at a "
@@ -690,6 +695,7 @@ class SettingsDialog(Dialog):
         cfg.forget_unreadable_key()  # replaced by what's in the field now (even if that's nothing)
         cfg.sonarr_anime_only = self.anime_only.get()
         cfg.sonarr_read_unknown = self.read_unknown.get()
+        cfg.sonarr_tag_after_scan = self.tag_after_scan.get()
         cfg.sonarr_path_from, cfg.sonarr_path_to = path_from, path_to
         schedule_scope = self.schedule_scopes[[self._scope_label(x) for x in self.schedule_scopes].index(
             self.schedule_scope.get())]

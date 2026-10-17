@@ -131,6 +131,7 @@ class Config:
     sonarr_read_unknown: bool = True
     sonarr_path_from: str = ""
     sonarr_path_to: str = ""
+    sonarr_tag_after_scan: bool = False    # tag shows dual-audio / missing-dub / no-dub in Sonarr after each scan
     window_geometry: str = ""
     air_status_source: str = "anilist"            # where air status comes from: "anilist", "sonarr" or "off"
     hidden_tabs: list = field(default_factory=list)  # names of the group tabs you've hidden

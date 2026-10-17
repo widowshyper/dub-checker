@@ -19,7 +19,7 @@ from tests.fakes import FakeLookup, FakeProber, make_pipeline, touch
 API_KEY = "secret"
 SERIES = [
     {"id": 1, "title": "Attack on Titan", "year": 2013, "path": "/tv/Attack on Titan (2013)", "seriesType": "anime",
-     "titleSlug": "attack-on-titan", "status": "continuing", "seasons": [
+     "titleSlug": "attack-on-titan", "tags": [1, 2], "status": "continuing", "seasons": [
          {"seasonNumber": 1, "statistics": {"previousAiring": "2013-09-28T15:00:00Z"}},
          {"seasonNumber": 2, "statistics": {"previousAiring": "2017-06-17T15:00:00Z",
                                             "nextAiring": "2099-01-07T15:00:00Z"}}]},
@@ -49,6 +49,13 @@ EPISODES = {
     3: [{"id": 301, "seasonNumber": 1, "episodeFileId": 31}],
 }
 COMMANDS: list[dict] = []  # bodies POSTed to /command
+TAGS: list[dict] = []      # Sonarr's tags; reset_tags() fills it
+TAG_EDITS: list[dict] = []  # bodies PUT to /series/editor
+
+
+def reset_tags() -> None:
+    TAGS[:] = [{"id": 1, "label": "anime"}, {"id": 2, "label": "no-dub"}]
+    TAG_EDITS.clear()
 
 
 class MockSonarr(BaseHTTPRequestHandler):
@@ -72,16 +79,31 @@ class MockSonarr(BaseHTTPRequestHandler):
             return self._send(200, CALENDAR)
         if route == "/api/v3/episode":
             return self._send(200, EPISODES.get(int(parse_qs(parsed.query)["seriesId"][0]), []))
+        if route == "/api/v3/tag":
+            return self._send(200, TAGS)
         return self._send(404, {"message": "NotFound"})
 
     def do_POST(self) -> None:  # noqa: N802
         if self.headers.get("X-Api-Key") != API_KEY:
             return self._send(401, {"error": "Unauthorized"})
-        if urlparse(self.path).path != self.url_base + "/api/v3/command":
-            return self._send(404, {"message": "NotFound"})
+        route = urlparse(self.path).path[len(self.url_base):]
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if route == "/api/v3/tag":
+            tag = {"id": max((t["id"] for t in TAGS), default=0) + 1, "label": body["label"].lower()}
+            TAGS.append(tag)
+            return self._send(201, tag)
+        if route != "/api/v3/command":
+            return self._send(404, {"message": "NotFound"})
         COMMANDS.append(body)
         return self._send(201, {"id": len(COMMANDS), "name": body["name"], "status": "queued"})
+
+    def do_PUT(self) -> None:  # noqa: N802
+        if self.headers.get("X-Api-Key") != API_KEY:
+            return self._send(401, {"error": "Unauthorized"})
+        if urlparse(self.path).path != self.url_base + "/api/v3/series/editor":
+            return self._send(404, {"message": "NotFound"})
+        TAG_EDITS.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        return self._send(202, [])
 
     def _send(self, status: int, body: object) -> None:
         data = json.dumps(body).encode()

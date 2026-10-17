@@ -24,7 +24,9 @@ from dubchecker.media_probe import MediaProber
 from dubchecker.models import STATUS_BY_CODE, Category, FileResult, FileStatus, ShowResult, language_word
 from dubchecker.pipeline import ScanOutcome, ScanPipeline, evaluate_season
 from dubchecker.results_store import SavedScan, delete_scan, load_scan, save_scan
-from dubchecker.sonarr import SonarrClient, SonarrError, search_for_replacements, series_page_url
+from dubchecker.categorize import dub_tag
+from dubchecker.sonarr import (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, SonarrClient, SonarrError, apply_dub_tags,
+                               search_for_replacements, series_page_url)
 
 log = logging.getLogger(__name__)
 
@@ -410,6 +412,9 @@ class App:
         self.clear_button = ttk.Button(buttons, text="Clear results", style="Card.TButton",
                                        command=self.clear_results)
         self.clear_button.pack(side="left", padx=(self.px(8), 0))
+        self.tag_button = ttk.Button(buttons, text="Tag shows in Sonarr...", style="Card.TButton",
+                                     command=self.tag_in_sonarr)
+        self.tag_button.pack(side="left", padx=(self.px(8), 0))
 
         # While scanning: which step it's on and what that step does, in plain words.
         self.phase_frame = self._card_frame(inner)
@@ -669,6 +674,10 @@ class App:
         url = self.config.sonarr_url.strip() or "not set up yet"
         key = "" if self.config.sonarr_api_key.strip() else " (no API key yet)"
         self.sonarr_label.configure(text=f"Sonarr: {url}{key}")
+        if self.sonarr_configured:  # tagging is only offered once Sonarr is set up
+            self.tag_button.pack(side="left", padx=(self.px(8), 0))
+        else:
+            self.tag_button.pack_forget()
 
     def browse_folder(self) -> None:
         folder = filedialog.askdirectory(parent=self.root, title="Choose your anime folder",
@@ -683,6 +692,7 @@ class App:
         busy, idle = ("disabled",) if scanning else ("!disabled",), ("!disabled",) if scanning else ("disabled",)
         self.scan_button.state(busy)
         self.clear_button.state(busy)
+        self.tag_button.state(busy)
         self.browse_button.state(busy)
         self.folder_entry.state(busy)
         self.scope_box.state(("disabled",) if scanning else ("readonly", "!disabled"))
@@ -930,6 +940,8 @@ class App:
             self.results_time, self.results_stopped = time.time(), outcome.stopped
         self.save_results()
         self.scan_only, self.scan_scheduled = None, False
+        if not outcome.error and not outcome.stopped and self.config.sonarr_tag_after_scan and self.sonarr_configured:
+            self.tag_in_sonarr(automatic=True)
         for warning in outcome.warnings:
             if scheduled:  # nobody may be watching: no message boxes piling up
                 log.warning("Scheduled scan: %s", warning)
@@ -1680,6 +1692,52 @@ class App:
                 self.queue.put(("error", (f"Couldn't find the show in Sonarr: {exc}",)))
 
         thread = threading.Thread(target=work, name="sonarr-open", daemon=True)
+        self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
+        thread.start()
+
+    def dub_tags_wanted(self) -> dict[tuple[str, str], str | None]:
+        """Each show's Sonarr tag, by (folder name, title). Dismissed shows are left alone."""
+        return {(show_id, seasons[0].group.show_title): dub_tag(seasons)
+                for show_id, seasons in self.model.by_show().items() if show_id not in self.dismissed}
+
+    def tag_in_sonarr(self, automatic: bool = False) -> None:
+        """Tag shows dual-audio, missing-dub or no-dub in Sonarr. ``automatic`` (after a scan, from
+        Settings > Sonarr) asks nothing and reports on the status line only."""
+        if not self.sonarr_configured or self.scanning:
+            return
+        if not self.model.results:
+            if not automatic:
+                messagebox.showinfo(APP_NAME, "Scan your library first, so Dub Checker knows how to tag each show.",
+                                    parent=self.root)
+            return
+        wanted = self.dub_tags_wanted()
+        if not automatic:
+            counts = {tag: sum(1 for t in wanted.values() if t == tag) for tag in (TAG_DUAL_AUDIO, TAG_MISSING_DUB,
+                                                                              TAG_NO_DUB, None)}
+            question = (
+                "Tag your shows in Sonarr?\n\n"
+                f"{TAG_DUAL_AUDIO}: {ui.plural(counts[TAG_DUAL_AUDIO], 'show')} (every episode has both languages)\n"
+                f"{TAG_MISSING_DUB}: {ui.plural(counts[TAG_MISSING_DUB], 'show')} (an English dub exists, but some "
+                "episodes don't have it)\n"
+                f"{TAG_NO_DUB}: {ui.plural(counts[TAG_NO_DUB], 'show')} (no English dub exists)\n"
+                f"No tag: {ui.plural(counts[None], 'show')} (to check manually, or with English-only episodes)\n\n"
+                "A show whose tag changes loses its old one. Your other Sonarr tags aren't touched, and nor are "
+                "dismissed shows or shows Sonarr doesn't have.")
+            if not messagebox.askyesno(APP_NAME, question, parent=self.root):
+                return
+            self.status_var.set("Tagging your shows in Sonarr...")
+
+        def work() -> None:
+            try:
+                client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
+                self.queue.put(("notice", (apply_dub_tags(client, wanted).text(),)))
+            except SonarrError as exc:
+                self.queue.put(("notice" if automatic else "error", (f"Couldn't tag shows in Sonarr: {exc}",)))
+            except Exception as exc:
+                log.exception("Tagging in Sonarr failed")
+                self.queue.put(("notice" if automatic else "error", (f"Couldn't tag shows in Sonarr: {exc}",)))
+
+        thread = threading.Thread(target=work, name="sonarr-tags", daemon=True)
         self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
         thread.start()
 
