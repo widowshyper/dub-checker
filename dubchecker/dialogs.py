@@ -378,6 +378,12 @@ class SettingsDialog(Dialog):
         self.read_unknown = tk.BooleanVar(value=cfg.sonarr_read_unknown)
         self.path_from = tk.StringVar(value=cfg.sonarr_path_from)
         self.path_to = tk.StringVar(value=cfg.sonarr_path_to)
+        self.schedule_on = tk.BooleanVar(value=cfg.schedule_enabled)
+        self.schedule_scopes = ["all", *app.scope_tabs()]
+        if cfg.schedule_scope not in self.schedule_scopes:
+            self.schedule_scopes.append(cfg.schedule_scope)  # e.g. Airing while air status is off
+        self.schedule_scope = tk.StringVar(value=self._scope_label(cfg.schedule_scope))
+        self.schedule_hours = tk.StringVar(value=str(cfg.schedule_every_hours))
 
         outer = ttk.Frame(self, padding=self.px(16))
         outer.pack(fill="both", expand=True)
@@ -388,6 +394,7 @@ class SettingsDialog(Dialog):
         self.notebook.add(self._general_tab(), text="General")
         self.notebook.add(self._drive_tab(), text="Hard drive care")
         self.notebook.add(self._sonarr_tab(), text="Sonarr")
+        self.notebook.add(self._schedule_tab(), text="Schedule")
         self.notebook.select(tab)
 
         buttons = ttk.Frame(outer)
@@ -395,7 +402,7 @@ class SettingsDialog(Dialog):
         ttk.Button(buttons, text="Save", style="Accent.TButton", command=self._save).pack(side="left")
         ttk.Button(buttons, text="Cancel", command=self.close).pack(side="left", padx=(self.px(8), 0))
         self._update_switches()
-        self.present(640, 610)
+        self.present(660, 620)
 
     # ------------------------------------------------------------ layout helpers
 
@@ -535,6 +542,30 @@ class SettingsDialog(Dialog):
         self.test_result.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(6), 0))
         return page
 
+    def _scope_label(self, scope: str) -> str:
+        return "Every show" if scope == "all" else f"Only {ui.TABS[scope].title}"
+
+    def _schedule_tab(self) -> ttk.Frame:
+        page = self._page()
+        ttk.Checkbutton(page, text="Scan automatically while Dub Checker is open", variable=self.schedule_on,
+                        style="Switch.TCheckbutton", command=self._update_switches).grid(
+            row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
+        self.schedule_scope_box = ttk.Combobox(page, textvariable=self.schedule_scope, state="readonly", width=30,
+                                               values=[self._scope_label(s) for s in self.schedule_scopes])
+        self._setting(page, "What to scan", self.schedule_scope_box,
+                      "Scanning only one tab is much quicker: just those shows are read and looked up, and the "
+                      "rest of your results stay as they are. It needs one full scan first, so Dub Checker knows "
+                      "which shows are in the tab.")
+        row = ttk.Frame(page)
+        self.schedule_hours_spin = self._spinbox(row, self.schedule_hours, 1, 24 * 30)
+        self.schedule_hours_spin.pack(side="left")
+        ttk.Label(row, text="hours").pack(side="left", padx=(self.px(6), 0))
+        self._setting(page, "Every", row, "24 is once a day; 168 is once a week.")
+        self._hint(page, "Dub Checker has to be open for this (minimised is fine). If a scan came due while it "
+                         "was closed, it runs about a minute after you open it. The scan uses the source and "
+                         "folder chosen in the main window, and never interrupts a scan you started yourself.")
+        return page
+
     # ------------------------------------------------------------ behaviour
 
     def _update_switches(self) -> None:
@@ -542,6 +573,9 @@ class SettingsDialog(Dialog):
         state = ("!disabled",) if self.pause_enabled.get() else ("disabled",)
         self.pause_files_spin.state(state)
         self.pause_seconds_spin.state(state)
+        on = self.schedule_on.get()
+        self.schedule_scope_box.state(("readonly", "!disabled") if on else ("disabled",))
+        self.schedule_hours_spin.state(("!disabled",) if on else ("disabled",))
 
     def _update_air_hint(self) -> None:
         source = self.air_source.get()
@@ -630,6 +664,7 @@ class SettingsDialog(Dialog):
             net_workers = self._int(self.net_workers, "Files read at the same time (network shares)", 1, 32)
             pause_files = self._int(self.pause_files, "Read ... files", 1, 100000)
             pause_seconds = self._int(self.pause_seconds, "Pause ... seconds", 1, 3600)
+            schedule_hours = self._int(self.schedule_hours, "Scan every ... hours", 1, 24 * 30)
         except ValueError as exc:
             messagebox.showerror(APP_NAME, str(exc), parent=self)
             return
@@ -656,6 +691,12 @@ class SettingsDialog(Dialog):
         cfg.sonarr_anime_only = self.anime_only.get()
         cfg.sonarr_read_unknown = self.read_unknown.get()
         cfg.sonarr_path_from, cfg.sonarr_path_to = path_from, path_to
+        schedule_scope = self.schedule_scopes[[self._scope_label(x) for x in self.schedule_scopes].index(
+            self.schedule_scope.get())]
+        schedule = (self.schedule_on.get(), schedule_scope, schedule_hours)
+        if schedule[0] and schedule != (cfg.schedule_enabled, cfg.schedule_scope, cfg.schedule_every_hours):
+            cfg.schedule_last_run = time.time()  # a new or changed schedule counts from now
+        cfg.schedule_enabled, cfg.schedule_scope, cfg.schedule_every_hours = schedule
         cfg.clamp()
         self.app.ctx.save_config()
         self.close()

@@ -275,6 +275,17 @@ class ResultsModel:
         self.add(result)
         return True
 
+    def remove(self, keys: list[str]) -> None:
+        """Forget seasons, e.g. ones that are gone from the library."""
+        for key in keys:
+            self.results.pop(key, None)
+        self._shows = None
+
+    def shows_in_tab(self, tab: str) -> set[str]:
+        """The shows (folder names) with a season under ``tab``, leaving out dismissed ones."""
+        return {show_id for show_id, seasons in self.by_show().items()
+                if show_id not in self.dismissed and any(in_tabs(s, {tab}) for s in seasons)}
+
     def __len__(self) -> int:
         return len(self.results)
 

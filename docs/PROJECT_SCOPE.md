@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 2.6.0
+**Version:** 2.7.0
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -16,6 +16,8 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 - Supports Japanese, Korean and Chinese originals.
 - Caches files it has already read, so a rescan only reads new or changed files.
 - Stop keeps partial results.
+- A scan can cover every show, or only the shows in one tab (much quicker; the rest of the results are kept).
+- Scheduled scans (Settings > Schedule) rescan every show or one tab every N hours while the app is open.
 - While scanning, each step is named and explained in plain words.
 - Hard drive care options:
   - how many files are read at once, with a separate setting for network shares;
@@ -96,7 +98,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Build and test**
 - PyInstaller (`build.bat`) produces the portable one-folder app and zip.
-- A unittest suite of 254 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
+- A unittest suite of 270 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
 
 ## Out of scope
 

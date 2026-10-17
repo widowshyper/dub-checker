@@ -16,12 +16,15 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from dubchecker import dpapi
+from dubchecker.models import Category
 
 log = logging.getLogger(__name__)
 
 AIR_SOURCES = ("anilist", "sonarr", "off")
 # The Air status drop-down above the list: "all", an AniList status, or "NONE" (not checked).
 AIR_FILTERS = ("all", "RELEASING", "NOT_YET_RELEASED", "HIATUS", "FINISHED", "CANCELLED", "NONE")
+# What a scan covers: every show, or only the shows in one tab (ui_common.TAB_IDS).
+SCAN_SCOPES = ("all", *(c.name for c in Category), "ENGLISH_ONLY", "AIRING")
 
 
 @functools.cache
@@ -133,6 +136,11 @@ class Config:
     hidden_tabs: list = field(default_factory=list)  # names of the group tabs you've hidden
     tab_order: list = field(default_factory=list)    # the tabs in the order you've dragged them into
     air_filter: str = "all"                          # the Air status drop-down above the list (AIR_FILTERS)
+    scan_scope: str = "all"                          # Scan library covers every show, or one tab (SCAN_SCOPES)
+    schedule_enabled: bool = False                   # scan automatically while Dub Checker is open
+    schedule_scope: str = "NEEDS_DUB"                # what the scheduled scan covers (SCAN_SCOPES)
+    schedule_every_hours: int = 24
+    schedule_last_run: float = 0.0                   # when the schedule last ran (Unix time); the next is due after
 
     _PORTABLE_FIELDS = ("library_path", "sonarr_path_to")
     # The API key is plain text in memory but written to the file encrypted (see dpapi.py).
@@ -196,6 +204,11 @@ class Config:
             self.air_status_source = "anilist"
         if self.air_filter not in AIR_FILTERS:
             self.air_filter = "all"
+        if self.scan_scope not in SCAN_SCOPES:
+            self.scan_scope = "all"
+        if self.schedule_scope not in SCAN_SCOPES:
+            self.schedule_scope = "NEEDS_DUB"
+        self.schedule_every_hours = min(24 * 30, max(1, self.schedule_every_hours))
 
     def forget_unreadable_key(self) -> None:
         """The user has seen the empty key field in Settings, so an old undecryptable key can go."""

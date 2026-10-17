@@ -19,6 +19,12 @@ Choose "Local files" and your anime folder (or Sonarr), then click
 The first scan reads every file; later scans only read new or changed files
 and are much faster.
 
+To rescan just one tab, e.g. the shows that still need English audio, choose
+it in the "Scan:" drop-down next to Scan library: only those shows are
+checked, and the rest of your results stay as they are. Settings > Schedule
+can do this (or a full scan) automatically every so many hours while Dub
+Checker is open.
+
 
 THE FOUR GROUPS
 ---------------

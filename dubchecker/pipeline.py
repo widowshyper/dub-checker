@@ -223,6 +223,7 @@ class ScanPipeline:
         self.warnings: list[str] = []
         self._stats_lock = threading.Lock()
         self.air_client: SonarrClient | None = None
+        self.only: frozenset[str] | None = None  # show folder names to scan; None = every show
 
     # ------------------------------------------------------------ helpers
 
@@ -250,10 +251,14 @@ class ScanPipeline:
     # ------------------------------------------------------------ entry point
 
     def run(self, root: str | None = None, sonarr: SonarrClient | None = None,
-            air_client: SonarrClient | None = None) -> ScanOutcome:
+            air_client: SonarrClient | None = None, only: set[str] | frozenset[str] | None = None) -> ScanOutcome:
         """Scan a folder (`root`) or Sonarr (`sonarr`). `air_client` is the Sonarr to ask for air status
-        when that's set to come from Sonarr; a Sonarr scan uses its own client."""
+        when that's set to come from Sonarr; a Sonarr scan uses its own client.
+
+        `only` limits the scan to these shows (by folder name, as in ``ShowGroup.folder_name``). Other show
+        folders aren't even listed, so rescanning one tab is much quicker than a full scan."""
         self.air_client = air_client or sonarr
+        self.only = frozenset(only) if only is not None else None
         started = time.monotonic()
         outcome = ScanOutcome(stats=self.stats)
         try:
@@ -283,13 +288,18 @@ class ScanPipeline:
         self.stats.network = is_network_path(root)
         lister = FolderLister()
         self.phase(1, "Reading your episode files",
-                   "Finding every episode in your library and reading which audio languages each file has. "
-                   "Files already read in an earlier scan are skipped, so rescans are quick.")
+                   ("Finding every episode in your library" if self.only is None else
+                    f"Finding the episodes of the {plural(len(self.only), 'show')} you chose to scan (the rest of "
+                    "your results are kept as they are)")
+                   + " and reading which audio languages each file has. Files already read in an earlier scan "
+                     "are skipped, so rescans are quick.")
         self.progress("Looking for show folders in your library...", busy=True)
         show_groups: list[tuple[str, list[ShowGroup]]] = []
         by_key: dict[str, ShowGroup] = {}
         try:
             shows = list_library(root, lister)
+            if self.only is not None:  # loose files are only parsed, not listed, so they're filtered below
+                shows = [show for show in shows if show.loose_files is not None or show.name in self.only]
             for number, show in enumerate(shows, 1):
                 self._check_cancel()
                 self.progress(f"Finding episode files: show {number} of {len(shows)} - {show.name}", busy=True)
@@ -298,6 +308,10 @@ class ScanPipeline:
                 except OSError as exc:
                     log.warning("Couldn't list %s: %s", show.path, exc)
                     groups = []
+                if self.only is not None:
+                    groups = [g for g in groups if g.folder_name in self.only]
+                    if not groups:
+                        continue
                 unique = []
                 for g in groups:
                     if g.key in by_key:  # loose files that belong to a show folder
@@ -335,6 +349,8 @@ class ScanPipeline:
         series = client.series()
         if cfg.sonarr_anime_only:
             series = [s for s in series if s.series_type == "anime"]
+        if self.only is not None:
+            series = [s for s in series if (last_path_part(s.path) or s.title) in self.only]
         series.sort(key=lambda s: natural_key(s.title))
 
         groups: dict[str, ShowGroup] = {}

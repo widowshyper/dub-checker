@@ -67,6 +67,17 @@ If your anime folder is on the same drive as Dub Checker, its path is saved with
 1. Choose **Scan from: Local files** and pick your library folder, or choose **Sonarr** (see below).
 2. Click **Scan library** (or press **F5**). **Stop** (or **Esc**) keeps everything finished so far.
 
+**Scanning only one tab.** The **Scan:** drop-down next to Scan library chooses what a scan covers: **Every show**, or only the shows in one tab, such as **Only Needs English Audio (12 shows)**.
+- Only those shows are listed, read and looked up. Other show folders aren't even opened, so it's much quicker than a full scan. Every other result stays as it was.
+- Seasons of those shows that have gone from the library are removed. If you press Stop, seasons it hadn't reached keep their earlier results.
+- It needs one full scan first (from the same source), so Dub Checker knows which shows are in the tab. Dismissed shows are skipped.
+
+**Scanning on a schedule.** **Settings > Schedule** scans automatically every so many hours (24 is once a day) while Dub Checker is open. Minimised is fine.
+- Choose **Every show**, or one tab such as **Only Needs English Audio** to keep an eye on shows waiting for a dub.
+- The next scheduled scan is shown under the status line.
+- If a scan came due while Dub Checker was closed, it runs about a minute after you open it. It never interrupts a scan you started yourself.
+- Problems are reported on the status line rather than in pop-ups, since nobody may be watching. Warnings also go to `logs/app.log`.
+
 While it scans, the panel shows which step it's on (for example "Step 2 of 3: Checking online whether English dubs exist") with a line explaining what that step does, then the progress of the step itself:
 
 1. **Reading your episode files.** Every episode file is read first, for example "Reading audio languages: file 132 of 840 (show 12 of 60 - Title)". Files already read in an earlier scan, and unchanged since, come from the cache instantly.
@@ -192,6 +203,9 @@ Everything is in `UserData/` next to the program:
 | `air_status_source` | `anilist` | Where air status comes from: `anilist`, `sonarr` or `off` |
 | `hidden_tabs` | none | The tabs you've hidden |
 | `tab_order` | default order | The order you've dragged the tabs into |
+| `scan_scope` | `all` | What **Scan library** covers: `all`, or a tab such as `NEEDS_DUB` |
+| `schedule_enabled` / `schedule_scope` / `schedule_every_hours` | off / `NEEDS_DUB` / 24 | Scheduled scans (Settings > Schedule) |
+| `schedule_last_run` | 0 | When the schedule last ran (Unix time); the next scan is due this many hours later |
 | `air_filter` | `all` | The Air status drop-down: `all`, `RELEASING`, `NOT_YET_RELEASED`, `HIATUS`, `FINISHED`, `CANCELLED` or `NONE` |
 | `sonarr_url` / `sonarr_api_key_encrypted` | | Sonarr connection (the key is `sonarr_api_key` in plain text off Windows) |
 | `sonarr_anime_only` / `sonarr_read_unknown` | on / on | Sonarr options |

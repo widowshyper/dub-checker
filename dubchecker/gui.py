@@ -34,6 +34,7 @@ READY_TEXT = "Ready."
 ARROW_CLOSED, ARROW_OPEN = "►", "▼"
 TOOLTIP_DELAY_MS = 550
 REFRESH_INTERVAL = 0.5  # seconds between table rebuilds while a scan is adding results
+SCHEDULE_CHECK_MS = 60_000  # how often to see whether a scheduled scan is due
 # (id, heading, width at 100 %, stretches)
 COLUMNS = (
     ("show", "Show", 230, True),
@@ -262,6 +263,12 @@ class App:
         self.model.dismissed = self.dismissed.keys()
         self.tabs: set[str] = {Category.NEEDS_DUB.name}  # selected tabs (ui.TAB_IDS); none = every show
         self._drag: dict[str, Any] | None = None  # the tab being pressed or dragged
+        # The scan running now: None = every show, else the show folders of one tab (``scan_scope``).
+        self.scan_only: set[str] | None = None
+        self.scan_scope = "all"
+        self.scan_scheduled = False
+        self.scan_keys: set[str] = set()
+        self._schedule_id: str | None = None
         self.sort_column = "show"
         self.sort_desc = False
         self.expanded: set[str] = set()           # shows whose seasons are listed
@@ -297,6 +304,8 @@ class App:
             self.status_var.set("Your Sonarr API key was saved on another PC or Windows account, so it can't be "
                                 "read here. Enter it again in Settings > Sonarr.")
         self._poll()
+        self.update_schedule_label()
+        self._schedule_id = root.after(SCHEDULE_CHECK_MS, self._check_schedule)
 
     # ------------------------------------------------------------ building
 
@@ -388,6 +397,11 @@ class App:
         buttons = self._card_frame(inner)
         buttons.configure(highlightthickness=0)
         buttons.grid(row=2, column=0, sticky="w", pady=(self.px(12), 0))
+        ttk.Label(buttons, text="Scan:", style="Card.TLabel").pack(side="left", padx=(0, self.px(8)))
+        self.scope_box = ttk.Combobox(buttons, state="readonly", width=34)
+        self.scope_box.pack(side="left", padx=(0, self.px(8)))
+        self.scope_box.bind("<<ComboboxSelected>>", self._on_scope_chosen)
+        self._scope_ids: list[str] = []
         self.scan_button = ttk.Button(buttons, text="Scan library", style="Card.Accent.TButton",
                                       command=self.start_scan)
         self.scan_button.pack(side="left")
@@ -405,13 +419,19 @@ class App:
         self.phase_title.pack(fill="x")
         self.phase_detail = ttk.Label(self.phase_frame, style="Card.Muted.TLabel", wraplength=self.px(900))
         self.phase_detail.pack(fill="x", pady=(self.px(2), 0))
-        inner.bind("<Configure>", lambda e: self.phase_detail.configure(wraplength=max(self.px(300), e.width - 8)),
-                   add="+")
         self.progress = ttk.Progressbar(inner, style="Card.Horizontal.TProgressbar", maximum=100)
         self.progress.grid(row=4, column=0, sticky="ew", pady=(self.px(10), 0))
         self.status_var = tk.StringVar(value=READY_TEXT)
-        ttk.Label(inner, textvariable=self.status_var, style="Card.TLabel").grid(
-            row=5, column=0, sticky="ew", pady=(self.px(8), 0))
+        status = ttk.Label(inner, textvariable=self.status_var, style="Card.TLabel")
+        status.grid(row=5, column=0, sticky="ew", pady=(self.px(8), 0))
+        self.schedule_label = ttk.Label(inner, style="Card.Muted.TLabel")
+        self.schedule_label.grid(row=6, column=0, sticky="ew", pady=(self.px(4), 0))
+
+        def wrap(event: Any) -> None:  # long lines wrap instead of running off the edge
+            width = max(self.px(300), event.width - 8)
+            for label in (self.phase_detail, status):
+                label.configure(wraplength=width)
+        inner.bind("<Configure>", wrap, add="+")
         self._on_source_change(save=False)
         return card
 
@@ -434,8 +454,17 @@ class App:
             self.tab_checks[tab] = ttk.Checkbutton(
                 self.tab_checks_frame, text=ui.TABS[tab].title, variable=variable,
                 command=lambda t=tab: self.set_tab_visible(t, self.tab_visible_vars[t].get()))
-        ttk.Label(bar, text="Click a tab to list its shows, click again to deselect it. Drag a tab to move it.",
-                  style="Caption.TLabel").grid(row=0, column=2, sticky="e")
+        hint = ttk.Label(bar, text="Click a tab to list its shows, click again to deselect it. Drag a tab to move it.",
+                         style="Caption.TLabel")
+        hint.grid(row=0, column=2, sticky="e")
+
+        def make_room(event: Any) -> None:
+            needed = self.tab_checks_frame.winfo_reqwidth() + hint.winfo_reqwidth() + self.px(120)
+            if needed > event.width:
+                hint.grid_remove()
+            else:
+                hint.grid()
+        bar.bind("<Configure>", make_room, add="+")
 
         self.cards_frame = ttk.Frame(section)
         self.cards_frame.grid(row=1, column=0, sticky="ew")
@@ -465,6 +494,7 @@ class App:
         for tab in ui.ordered_tabs(self.config.tab_order):
             if tab != ui.AIRING or self.air_status_on:  # no Airing tab when air status is off
                 self.tab_checks[tab].pack(side="left", padx=(0, self.px(16)))
+        self._update_scope_box()
 
     def _build_toolbar(self) -> ttk.Frame:
         bar = ttk.Frame(self.root)
@@ -633,6 +663,7 @@ class App:
         self._layout_cards()
         self._show_air_filter()
         self.select_tabs(self.tabs)
+        self.update_schedule_label()
 
     def update_sonarr_summary(self) -> None:
         url = self.config.sonarr_url.strip() or "not set up yet"
@@ -654,33 +685,60 @@ class App:
         self.clear_button.state(busy)
         self.browse_button.state(busy)
         self.folder_entry.state(busy)
+        self.scope_box.state(("disabled",) if scanning else ("readonly", "!disabled"))
         for button in self.source_buttons:
             button.state(busy)
         self.stop_button.state(idle)
 
-    def start_scan(self) -> None:
+    def start_scan(self, scope: str | None = None, scheduled: bool = False) -> bool:
+        """Scan every show, or (``scope`` = a tab) only the shows in that tab, keeping every other result.
+        A scheduled scan reports problems on the status line instead of in message boxes."""
         if self.scanning:
-            return
+            return False
+        scope = self.config.scan_scope if scope is None else scope
+
+        def refuse(text: str, error: bool = False) -> bool:
+            if scheduled:
+                self.status_var.set("The scheduled scan didn't run: " + text.replace("\n", " "))
+            elif error:
+                messagebox.showerror(APP_NAME, text, parent=self.root)
+            else:
+                messagebox.showinfo(APP_NAME, text, parent=self.root)
+            return False
+
         source = self.source_var.get()
         path = ""
         if source == "folder":
             path = self.folder_var.get().strip().strip('"')
             if not path:
-                messagebox.showinfo(APP_NAME, "Choose your anime folder first (click Browse...).", parent=self.root)
-                return
+                return refuse("Choose your anime folder first (click Browse...).")
             if not os.path.isdir(path):
-                messagebox.showerror(APP_NAME, f"The folder\n{path}\ncan't be found. Is the drive connected?",
-                                     parent=self.root)
-                return
+                return refuse(f"The folder\n{path}\ncan't be found. Is the drive connected?", error=True)
             self.config.library_path = path
         elif not self.config.sonarr_url.strip() or not self.config.sonarr_api_key.strip():
+            if scheduled:
+                return refuse("Sonarr's address and API key aren't set.")
             messagebox.showinfo(APP_NAME, "Enter Sonarr's address and API key first.", parent=self.root)
             self.open_settings(tab=2)
-            return
+            return False
+
+        only: set[str] | None = None
+        if scope != "all":
+            title = ui.TABS[scope].title
+            if not self.model.results or self.results_source != source:
+                where = "Sonarr" if source == "sonarr" else "your local files"
+                return refuse(f"To scan only {title}, scan every show from {where} once first, so Dub Checker "
+                              "knows which shows are in it.")
+            only = self.model.shows_in_tab(scope)
+            if not only:
+                return refuse(f"No shows are in {title} right now, so there's nothing to scan.")
         self.config.scan_source = source
         self.ctx.save_config()
 
-        self.model.clear()
+        if only is None:
+            self.model.clear()
+        self.scan_only, self.scan_scope, self.scan_scheduled = only, scope, scheduled
+        self.scan_keys: set[str] = set()  # seasons this scan has reported, to spot ones that are gone
         self.results_source = source
         self.cancel = threading.Event()
         self._set_scanning(True)
@@ -688,11 +746,12 @@ class App:
         self._show_progress("Getting ready...", None, True)
         self.update_cards()
         self.refresh_table()
-        self.worker = threading.Thread(target=self._scan_worker, args=(source, path, self.cancel),
+        self.worker = threading.Thread(target=self._scan_worker, args=(source, path, self.cancel, only),
                                        name="scan", daemon=True)
         self.worker.start()
+        return True
 
-    def _scan_worker(self, source: str, path: str, cancel: threading.Event) -> None:
+    def _scan_worker(self, source: str, path: str, cancel: threading.Event, only: set[str] | None = None) -> None:
         def emit(kind: str, *payload: Any) -> None:
             self.queue.put((kind, payload))
 
@@ -707,12 +766,12 @@ class App:
             pipeline = ScanPipeline(self.config, self.ctx.cache, self.ctx.overrides, prober, lookup_factory, emit,
                                     cancel)
             if source == "sonarr":
-                pipeline.run(sonarr=SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key))
+                pipeline.run(sonarr=SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key), only=only)
             else:
                 # Air status from Sonarr works after a local files scan too, when Sonarr is set up.
                 wants_sonarr = self.config.air_status_source == "sonarr" and self.sonarr_configured
                 air_client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key) if wants_sonarr else None
-                pipeline.run(root=path, air_client=air_client)
+                pipeline.run(root=path, air_client=air_client, only=only)
         except Exception as exc:  # the pipeline reports its own errors; this is a last resort
             log.exception("Scan worker crashed")
             emit("done", ScanOutcome(error=f"The scan failed unexpectedly: {exc}"))
@@ -784,7 +843,7 @@ class App:
                 elif kind in ("results", "result"):
                     items = payload[0] if kind == "results" else [payload[0]]
                     for result in items:
-                        self.model.add(result)
+                        self._add_scanned(result)
                     changed = changed or bool(items)
                 elif kind == "replace":
                     changed = self._on_replaced(payload[0]) or changed
@@ -832,10 +891,10 @@ class App:
         self.closing.set()
         try:
             self.progress.stop()  # its animation timer would outlive the window
-            for pending in (self._poll_id, self._refresh_id):
+            for pending in (self._poll_id, self._refresh_id, self._schedule_id):
                 if pending is not None:
                     self.root.after_cancel(pending)
-            self._refresh_id = None
+            self._refresh_id = self._schedule_id = None
         except tk.TclError:  # the window is already gone
             pass
         self._poll_id = None
@@ -847,22 +906,36 @@ class App:
         self.worker = None
         self._set_scanning(False)
         self._hide_progress()
-        shows = self.model.show_count()
+        only, scheduled = self.scan_only, self.scan_scheduled
+        if only is not None and not outcome.error and not outcome.stopped:
+            self._forget_missing_seasons(only)
+        shows = self.model.show_count() if only is None else len(only)
+        what = ui.plural(shows, "show") + ("" if only is None else f" in {ui.TABS[self.scan_scope].title}")
+        prefix = "Scheduled scan: " if scheduled else ""
         if outcome.error:
-            self.status_var.set("The scan couldn't finish.")
-            messagebox.showerror(APP_NAME, outcome.error, parent=self.root)
+            self.status_var.set(f"{prefix}The scan couldn't finish." + (f" {outcome.error}" if scheduled else ""))
+            if not scheduled:
+                messagebox.showerror(APP_NAME, outcome.error, parent=self.root)
         elif outcome.stopped:
-            self.status_var.set(f"Stopped - kept the {ui.plural(shows, 'show')} finished so far "
-                                f"{outcome.stats.short_text()}")
+            kept = f"kept the {what} finished so far" if only is None else f"kept what was rechecked of the {what}"
+            self.status_var.set(f"{prefix}Stopped - {kept} {outcome.stats.short_text()}")
         else:
-            self.status_var.set(f"Done - checked {ui.plural(shows, 'show')} in "
-                                f"{ui.format_duration(outcome.elapsed)} {outcome.stats.short_text()}")
+            verb = "checked" if only is None else "rechecked"
+            rest = "" if only is None else " The rest are as before."
+            self.status_var.set(f"{prefix}Done - {verb} {what} in {ui.format_duration(outcome.elapsed)} "
+                                f"{outcome.stats.short_text()}{rest}")
         self.update_cards()
         self.refresh_table()
-        self.results_time, self.results_stopped = time.time(), outcome.stopped
+        if only is None:
+            self.results_time, self.results_stopped = time.time(), outcome.stopped
         self.save_results()
+        self.scan_only, self.scan_scheduled = None, False
         for warning in outcome.warnings:
-            messagebox.showwarning(APP_NAME, warning, parent=self.root)
+            if scheduled:  # nobody may be watching: no message boxes piling up
+                log.warning("Scheduled scan: %s", warning)
+                self.status_var.set(self.status_var.get() + " There was a warning - see logs/app.log.")
+            else:
+                messagebox.showwarning(APP_NAME, warning, parent=self.root)
 
     # ------------------------------------------------------------ groups and table
 
@@ -989,6 +1062,84 @@ class App:
         counts = self.model.counts() if (self.model.results or self.scanning) else None
         for tab, card in self.cards.items():
             card.set_count(None if counts is None else counts[tab])
+        self._update_scope_box(counts)
+
+    # ------------------------------------------------------------ scanning one tab
+
+    def scope_tabs(self) -> list[str]:
+        """The tabs a scan can be limited to, in the user's order (no Airing when air status is off)."""
+        return [tab for tab in ui.ordered_tabs(self.config.tab_order) if tab != ui.AIRING or self.air_status_on]
+
+    def scope_name(self, scope: str) -> str:
+        return "every show" if scope == "all" else ui.TABS[scope].title
+
+    def _update_scope_box(self, counts: dict[str, int] | None = None) -> None:
+        """The Scan: drop-down - every show, or only the shows in one tab, with how many there are."""
+        if counts is None and self.model.results:
+            counts = self.model.counts()
+        self._scope_ids = ["all", *self.scope_tabs()]
+        if self.config.scan_scope not in self._scope_ids:
+            self.config.scan_scope = "all"
+        labels = ["Every show"]
+        for tab in self._scope_ids[1:]:
+            count = f" ({ui.plural(counts[tab], 'show')})" if counts else ""
+            labels.append(f"Only {ui.TABS[tab].title}{count}")
+        self.scope_box.configure(values=labels)
+        self.scope_box.current(self._scope_ids.index(self.config.scan_scope))
+
+    def _on_scope_chosen(self, _event: Any = None) -> None:
+        self.config.scan_scope = self._scope_ids[self.scope_box.current()]
+        self.scope_box.selection_clear()
+        self.ctx.save_config()
+
+    def _add_scanned(self, result: ShowResult) -> None:
+        """A season from the scan. A one-tab scan that was stopped before a season keeps that season's
+        earlier result rather than replacing it with "not checked"."""
+        if self.scan_only is not None:
+            self.scan_keys.add(result.key)
+            old = self.model.results.get(result.key)
+            if result.stopped and old is not None and not old.stopped:
+                return
+        self.model.add(result)
+
+    def _forget_missing_seasons(self, shows: set[str]) -> None:
+        """After a one-tab scan: seasons of the rescanned shows that weren't found again are gone."""
+        by_show = self.model.by_show()
+        self.model.remove([s.key for show in shows for s in by_show.get(show, []) if s.key not in self.scan_keys])
+
+    # ------------------------------------------------------------ scheduled scans
+
+    def schedule_due_at(self) -> float | None:
+        """When the next scheduled scan is due (Unix time), or None if scheduling is off."""
+        cfg = self.config
+        if not cfg.schedule_enabled:
+            return None
+        return cfg.schedule_last_run + cfg.schedule_every_hours * 3600
+
+    def _check_schedule(self) -> None:
+        """Every minute: start the scheduled scan if it's due and nothing else is scanning."""
+        self._schedule_id = None
+        try:
+            due = self.schedule_due_at()
+            if due is not None and time.time() >= due and not self.scanning:
+                self.config.schedule_last_run = time.time()
+                self.ctx.save_config()
+                self.start_scan(self.config.schedule_scope, scheduled=True)
+            self.update_schedule_label()
+        finally:
+            if not self.closing.is_set():
+                self._schedule_id = self.root.after(SCHEDULE_CHECK_MS, self._check_schedule)
+
+    def update_schedule_label(self) -> None:
+        due = self.schedule_due_at()
+        if due is None:
+            self.schedule_label.configure(text="")
+            self.schedule_label.grid_remove()
+            return
+        when = "in about a minute" if due <= time.time() else time.strftime("%a %d %b at %H:%M", time.localtime(due))
+        self.schedule_label.configure(
+            text=f"Next scheduled scan ({self.scope_name(self.config.schedule_scope)}): {when}")
+        self.schedule_label.grid()
 
     # ------------------------------------------------------------ air status filter
 
