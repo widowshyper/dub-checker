@@ -14,13 +14,13 @@ If Windows shows "Windows protected your PC" (SmartScreen), click
 "More info" and then "Run anyway". This appears because the program isn't
 signed with a paid certificate, not because anything is wrong with it.
 
-Choose "Local files" and your anime folder (or Sonarr), then click
-"Scan library" (or press F5).
+In the sidebar on the left, choose "Local files" and your anime folder (or
+Sonarr), then click "Scan library" (or press F5).
 The first scan reads every file; later scans only read new or changed files
 and are much faster.
 
 To rescan just one tab, e.g. the shows that still need English audio, choose
-it in the "Scan:" drop-down next to Scan library: only those shows are
+it in the drop-down above Scan library: only those shows are
 checked, and the rest of your results stay as they are. Settings > Schedule
 can do this (or a full scan) automatically every so many hours while Dub
 Checker is open.
@@ -69,8 +69,10 @@ English-only episodes in Sonarr..." (when Sonarr is set up).
 The tabs are in the sidebar on the left, under Library. Click one to select
 or deselect it; several can be selected at once, and with none selected every
 show is listed. Drag a tab up or down to move it. Untick a tab in the "Edit"
-menu next to Library to hide it, and tick it to bring it back. The Airing tab and Air status column show which shows are still airing -
-a dub may still be on its way for those. The Air status drop-down above the
+menu next to Library to hide it, and tick it to bring it back.
+
+The Airing tab and Air status column show which shows are still airing - a
+dub may still be on its way for those. The Air status drop-down above the
 list narrows it to shows that are airing, finished and so on; the tab counts
 follow it (for example "1 of 19").
 Air status can come from AniList, from your Sonarr, or be switched off:
@@ -82,6 +84,11 @@ brings it back.
 
 Your last results are kept when you close Dub Checker and shown again the
 next time you open it.
+
+Settings (at the top of the sidebar) has four pages - General, Hard drive
+care, Sonarr and Schedule - listed down its left side. Each setting has its
+switch, number or button on the right and a short explanation under it.
+Click Save to keep your changes, or Cancel to forget them.
 
 
 MOVING TO ANOTHER PC OR A USB STICK
@@ -118,7 +125,7 @@ Deleting the whole UserData folder resets everything.
 
 In the app, "Clear results" empties the list and forgets it (it won't come
 back next time). File and AniList information is kept. To forget saved
-AniList answers, use Settings > General > Clear saved online info.
+AniList answers, click "Clear" next to Saved online info in Settings > General.
 
 
 PRIVACY

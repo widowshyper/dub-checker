@@ -27,9 +27,9 @@ Each season lands in one of four groups:
 |---|---|
 | ![The main window in dark mode](docs/screenshots/main_dark.png) | ![The episode window for a Chinese show: each file coloured by its audio, with every audio track listed](docs/screenshots/episodes.png) |
 
-| Settings: hard drive care |
-|---|
-| ![The Settings window on the Hard drive care page: its pages in a sidebar, and grouped settings with a switch or number on the right](docs/screenshots/settings.png) |
+| Settings | Settings in dark mode |
+|---|---|
+| ![The Settings window on the Hard drive care page: its pages in a sidebar, and grouped settings with a switch or number on the right](docs/screenshots/settings.png) | ![The Settings window's Sonarr page in dark mode: the address, API key and Test button, and switches for the Sonarr options](docs/screenshots/settings_sonarr_dark.png) |
 
 ## Quick start
 
@@ -71,6 +71,11 @@ controls (under **Scan**), with **Settings** at the top. The list fills the rest
 
 1. In the sidebar's **Scan** section, choose **Local files** and pick your library folder with **Browse...**, or choose **Sonarr** (see below).
 2. Click **Scan library** (or press **F5**). **Stop** (or **Esc**) keeps everything finished so far.
+
+**Settings** (at the top of the sidebar) is laid out like macOS System Settings: its pages (**General**,
+**Hard drive care**, **Sonarr** and **Schedule**) are in a sidebar, and each page groups its settings with a
+name on the left, a switch, number or button on the right, and what it does underneath. Changes take effect
+when you click **Save**; **Cancel** (or Esc) forgets them.
 
 **Scanning only one tab.** The drop-down above Scan library chooses what a scan covers: **Every show**, or only the shows in one tab, such as **Only Needs English Audio (12 shows)**.
 - Only those shows are listed, read and looked up. Other show folders aren't even opened, so it's much quicker than a full scan. Every other result stays as it was.
@@ -172,7 +177,7 @@ Choose **Sonarr** in the sidebar's Scan section, then click **Change...** next t
 - **Only series set to the Anime series type:** on by default.
 - **Read files myself when Sonarr doesn't know a track's language:** on by default. Only files Sonarr couldn't label (or hasn't analysed) are read, through the same cache and throttle as folder scans.
 - **Path mapping:** only needed if Sonarr runs on another machine or in Docker. For example, Sonarr sees `/tv` while this PC sees `\\nas\media\tv`. Fill in both or neither. If files can't be reached, you get one warning suggesting this.
-- **Test connection** shows Sonarr's version, how many series it has, and how many are set to Anime.
+- **Test** (next to Test the connection) shows Sonarr's version, how many series it has, and how many are set to Anime.
 
 **Searching for replacements.** Right-click a season or show (or use the button in the episode window) and choose **Search for replacements in Sonarr...**. Dub Checker finds the series in Sonarr by its folder name (or its title), matches your Japanese-only episodes to Sonarr's by file name, and starts an *EpisodeSearch* for exactly those episodes. If none can be matched (for example, the files were renamed since), it searches the whole season instead. This works after a Sonarr scan and after a Local files scan of a library Sonarr manages. Progress shows up on Sonarr's Activity page.
 
@@ -203,7 +208,7 @@ Works with Sonarr v3, v4 and v5 (API v3). Manual matches are shared between fold
 
 - **Files read at the same time:** default 4. Use **1** for a single spinning hard drive; it's usually fastest and gentlest.
 - **Network shares:** optionally use a different number (default 6) when the library is on a NAS or SMB/NFS share. Reading several files at once hides network delays.
-- **Take breaks while reading:** "read N files, then pause S seconds" (default 50 files / 30 s, off). The status line counts down, and Stop works during a break. Only real disk reads count; files already known skip the breaks.
+- **Take breaks while reading:** **Pause after reading** N files, **Pause for** S seconds (default 50 files / 30 s, off). The status line counts down, and Stop works during a break. Only real disk reads count; files already known skip the breaks.
 
 Rescans are cheap even over SMB. Folder listings supply each file's size and date, so no per-file network requests are made. Only new or changed files are read, and MediaInfo reads just the file headers.
 
