@@ -1,4 +1,5 @@
-"""Light/dark theming on top of sv-ttk (Sun Valley).
+"""Light/dark theming on top of sv-ttk (Sun Valley), with a macOS-style palette: Apple's system colours,
+glass panels (see glass.py) and a title bar that blends into the window on Windows 11.
 
 Pitfalls handled here:
 * sv-ttk's light theme doesn't reliably set the global background, so Tk's grey
@@ -19,25 +20,37 @@ import sv_ttk
 
 log = logging.getLogger(__name__)
 
+# bg: the window; card: glass panels (the sidebar, the activity panel); card_hover / card_selected: sidebar
+# rows; glass*: capsule buttons; rim_*/sheen: the bright edge of glass; field*/track/thumb: sunken controls.
 PALETTES: dict[str, dict[str, str]] = {
     "light": {
-        "bg": "#fafafa", "card": "#ffffff", "card_hover": "#f4f4f5", "card_selected": "#f0f5fd",
-        "border": "#e2e2e4", "fg": "#1c1c1c", "muted": "#5f6368", "link": "#005fb8",
-        "row_even": "#fafafa", "row_odd": "#f1f1f4", "row_hover": "#e3ecf9", "on_color": "#ffffff",
-        "red": "#c42b1c", "grey": "#6b6f76", "green": "#0f7b0f", "amber": "#9d5d00", "blue": "#0063b1", "purple": "#6b3fd4",
-        "teal": "#00838f",
+        "bg": "#fbfbfd", "card": "#f1f1f4", "card_hover": "#e6e6eb", "card_selected": "#dcdce2",
+        "border": "#d2d2d7", "fg": "#1d1d1f", "muted": "#6e6e73", "link": "#0066cc",
+        "row_even": "#fbfbfd", "row_odd": "#f3f3f6", "row_hover": "#e8eefa", "row_selected": "#d3e3fd",
+        "on_color": "#ffffff", "accent": "#007aff", "accent_hover": "#1f8bff", "accent_pressed": "#006ae6",
+        "glass": "#fdfdfe", "glass_hover": "#f4f4f7", "glass_pressed": "#e9e9ee",
+        "rim_top": "#ffffff", "rim_bottom": "#d4d4da", "sheen": "#ffffff",
+        "field": "#ececf0", "field_rim_top": "#d6d6dc", "field_rim_bottom": "#f6f6f8",
+        "track": "#e3e3e8", "thumb": "#ffffff",
+        "red": "#d70015", "grey": "#8e8e93", "green": "#248a3d", "amber": "#c45f00", "blue": "#007aff",
+        "purple": "#8944ab", "teal": "#0a7f99",
     },
     "dark": {
-        "bg": "#1c1c1c", "card": "#262626", "card_hover": "#2e2e2e", "card_selected": "#2b3440",
-        "border": "#3a3a3a", "fg": "#fafafa", "muted": "#a8a8a8", "link": "#79c4ff",
-        "row_even": "#1c1c1c", "row_odd": "#262626", "row_hover": "#2d3a4b", "on_color": "#1c1c1c",
-        "red": "#ff8f8f", "grey": "#b3b3b3", "green": "#6ccb5f", "amber": "#f5c451", "blue": "#60b0ff", "purple": "#b99cff",
-        "teal": "#4dd0e1",
+        "bg": "#1c1c1e", "card": "#2a2a2d", "card_hover": "#343437", "card_selected": "#3c3c40",
+        "border": "#3a3a3c", "fg": "#f5f5f7", "muted": "#98989d", "link": "#2997ff",
+        "row_even": "#1c1c1e", "row_odd": "#222225", "row_hover": "#29303d", "row_selected": "#203a5c",
+        "on_color": "#1c1c1e", "accent": "#0a84ff", "accent_hover": "#3096ff", "accent_pressed": "#0070e0",
+        "glass": "#3a3a3d", "glass_hover": "#444448", "glass_pressed": "#2f2f32",
+        "rim_top": "#616166", "rim_bottom": "#2c2c2f", "sheen": "#4c4c50",
+        "field": "#2c2c2e", "field_rim_top": "#18181a", "field_rim_bottom": "#3a3a3d",
+        "track": "#1f1f22", "thumb": "#55555a",
+        "red": "#ff453a", "grey": "#98989d", "green": "#30d158", "amber": "#ff9f0a", "blue": "#0a84ff",
+        "purple": "#bf5af2", "teal": "#40c8e0",
     },
 }
 
 CARD_STYLES = ("Card.TLabel", "Card.TButton", "Card.Accent.TButton", "Card.TEntry", "Card.TRadiobutton",
-               "Card.TCheckbutton", "Card.Horizontal.TProgressbar")
+               "Card.TCheckbutton", "Card.Horizontal.TProgressbar", "Card.TFrame")
 
 
 def windows_prefers_dark() -> bool:
@@ -73,21 +86,41 @@ def _scale_fonts(root: tk.Tk) -> None:
             if size < 0:  # pixel size
                 font.configure(size=-round(abs(size) * scale))
     root._dc_fonts_scaled = True  # type: ignore[attr-defined]
+    # Our own: a large title like macOS's, and small bold section headings for the sidebar.
+    title_family = tkfont.nametofont("SunValleyTitleFont", root=root).cget("family")
+    strong_family = tkfont.nametofont("SunValleyBodyStrongFont", root=root).cget("family")
+    # Kept with the root: tkinter deletes a named font when its Font object goes.
+    root._dc_fonts = [  # type: ignore[attr-defined]
+        tkfont.Font(root=root, name="DubLargeTitleFont", family=title_family, size=-round(24 * scale)),
+        tkfont.Font(root=root, name="DubSectionFont", family=strong_family, size=-round(12 * scale))]
 
 
-def set_title_bar(window: tk.Misc, dark: bool) -> None:
-    """Dark or light Windows title bar (DWMWA_USE_IMMERSIVE_DARK_MODE is 20, or 19 on older builds)."""
+def _colorref(color: str) -> int:
+    color = color.lstrip("#")
+    return int(color[4:6], 16) << 16 | int(color[2:4], 16) << 8 | int(color[0:2], 16)
+
+
+def set_title_bar(window: tk.Misc, dark: bool, caption: str = "") -> None:
+    """Dark or light Windows title bar (DWMWA_USE_IMMERSIVE_DARK_MODE is 20, or 19 on older builds). On
+    Windows 11 it also takes the window's own colour (``caption``), so it blends in as on a Mac, with
+    rounded corners."""
     if sys.platform != "win32":
         return
     try:
         import ctypes
         window.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+        set_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
         value = ctypes.c_int(1 if dark else 0)
         for attribute in (20, 19):
-            if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(value),
-                                                          ctypes.sizeof(value)) == 0:
+            if set_attribute(hwnd, attribute, ctypes.byref(value), ctypes.sizeof(value)) == 0:
                 break
+        if caption:  # Windows 11 only; older versions ignore these
+            for attribute, setting in ((33, 2),                       # DWMWA_WINDOW_CORNER_PREFERENCE: round
+                                       (35, _colorref(caption)),      # DWMWA_CAPTION_COLOR
+                                       (34, _colorref(caption))):     # DWMWA_BORDER_COLOR
+                value = ctypes.c_int(setting)
+                set_attribute(hwnd, attribute, ctypes.byref(value), ctypes.sizeof(value))
         if window.winfo_viewable():  # nudge Windows to repaint the title bar
             window.attributes("-alpha", 0.99)
             window.attributes("-alpha", 1.0)
@@ -118,6 +151,12 @@ def apply_theme(root: tk.Tk, setting: str) -> dict[str, str]:
     style.configure("Caption.TLabel", font="SunValleyCaptionFont", foreground=palette["muted"])
     style.configure("Good.TLabel", foreground=palette["green"])
     style.configure("Bad.TLabel", foreground=palette["red"])
+    style.configure("LargeTitle.TLabel", font="DubLargeTitleFont")
+    style.configure("Section.TLabel", background=palette["card"], foreground=palette["muted"], font="DubSectionFont")
+    style.configure("Card.Caption.TLabel", background=palette["card"], foreground=palette["muted"],
+                    font="SunValleyCaptionFont")
+    style.configure("Card.Link.TLabel", background=palette["card"], foreground=palette["link"],
+                    font="SunValleyCaptionFont")
 
     body = tkfont.nametofont("SunValleyBodyFont", root=root)
     style.configure("Treeview", background=palette["bg"], fieldbackground=palette["bg"],
@@ -129,7 +168,26 @@ def apply_theme(root: tk.Tk, setting: str) -> dict[str, str]:
         ("Treeitem.image", {"side": "left", "sticky": ""}),
         ("Treeitem.focus", {"side": "left", "sticky": "", "children": [
             ("Treeitem.text", {"side": "left", "sticky": ""})]})]})])
-    style.configure("Results.Treeview", indent=0)
+    style.configure("Results.Treeview", indent=0, background=palette["bg"], fieldbackground=palette["bg"])
+    # No frame around the results: they sit straight on the window, as in Finder.
+    style.layout("Results.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+    style.map("Treeview", background=[("selected", palette["row_selected"])],
+              foreground=[("selected", palette["fg"])])
+    # Plain column headings: small grey text, no buttons.
+    try:
+        style.element_create("Flat.Treeheading.cell", "from", "default", "Treeheading.cell")
+    except tk.TclError:
+        pass  # this theme has it already
+    style.layout("Results.Treeview.Heading", [
+        ("Flat.Treeheading.cell", {"sticky": "nswe"}),
+        ("Treeheading.padding", {"sticky": "nswe", "children": [
+            ("Treeheading.image", {"side": "right", "sticky": ""}),
+            ("Treeheading.text", {"sticky": "we"})]})])
+    style.configure("Results.Treeview.Heading", background=palette["bg"], foreground=palette["muted"],
+                    font="DubSectionFont", padding=(round(8 * scale), round(6 * scale)), relief="flat",
+                    borderwidth=0)
+    style.map("Results.Treeview.Heading", background=[("active", palette["row_odd"])],
+              foreground=[("active", palette["fg"])])
     root.configure(background=palette["bg"])
-    set_title_bar(root, mode == "dark")
+    set_title_bar(root, mode == "dark", palette["bg"])
     return palette

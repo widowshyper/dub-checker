@@ -103,7 +103,7 @@ STATUS_COLORS: dict[FileStatus, str] = {  # palette keys, used for the audio bar
 LEGEND: tuple[tuple[FileStatus, str], ...] = (
     (FileStatus.DUAL, "Dual audio"),
     (FileStatus.ENGLISH_ONLY, "English only"),
-    (FileStatus.ORIGINAL_ONLY, "Original language only (Japanese, Korean or Chinese)"),
+    (FileStatus.ORIGINAL_ONLY, "Original language only"),
     (FileStatus.UNLABELED, "Unlabeled"),
     (FileStatus.ERROR, "Couldn't read"),
 )
@@ -391,12 +391,14 @@ class ResultsModel:
     def show_count(self) -> int:
         return len(self.by_show())
 
-    def counts(self) -> dict[str, int]:
-        """Number of shows (not seasons) under each tab (see TAB_IDS); a show can be under several."""
+    def counts(self, air_filter: str = "all") -> dict[str, int]:
+        """Number of shows (not seasons) under each tab (see TAB_IDS); a show can be under several.
+        With ``air_filter``, only seasons that pass it count, as in ``rows``."""
         counts = dict.fromkeys(TAB_IDS, 0)
         for show_id, seasons in self.by_show().items():
             if show_id in self.dismissed:
                 continue
+            seasons = [s for s in seasons if air_matches(s, air_filter)]
             for name in {group_tab(s) for s in seasons}:
                 counts[name] += 1
             for tab in CROSS_TABS:

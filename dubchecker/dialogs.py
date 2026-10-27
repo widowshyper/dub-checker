@@ -50,7 +50,7 @@ class Dialog(tk.Toplevel):
         y = root.winfo_rooty() + (root.winfo_height() - h) // 3
         x, y = max(0, min(x, screen_w - w)), max(0, min(y, screen_h - h - 40))
         self.geometry(f"{w}x{h}+{x}+{y}")
-        theme.set_title_bar(self, self.app.palette["mode"] == "dark")
+        theme.set_title_bar(self, self.app.palette["mode"] == "dark", self.app.palette["bg"])
         self.deiconify()
         if self.modal:
             self.grab_set()
@@ -543,7 +543,7 @@ class SettingsDialog(Dialog):
         self._hint(page, "Tags each show dual-audio (every episode has both languages), missing-dub (an English "
                          "dub exists but some episodes don't have it), no-dub (no English dub exists) or "
                          "english-only (some episodes have English but not the original language). You can also do "
-                         "it any time with Tag shows in Sonarr... in the main window.")
+                         "it any time with Tag in Sonarr... in the sidebar.")
 
         self._heading(page, "Path mapping")
         self._hint(page, "Only needed if Sonarr runs on another computer or in Docker and sees your files at a "

@@ -9,7 +9,7 @@ which shows are missing English dub audio, and whether an English dub exists at 
 
 **[Download the portable Windows app](../../releases/latest)**: unzip it and run `DubChecker.exe`. Nothing to install.
 
-![Dub Checker's main window: four summary cards, and a table of shows with coloured audio bars and episodes opened out](docs/screenshots/main.png)
+![Dub Checker's main window: a glass sidebar listing the tabs with their counts and the scan controls, and a table of shows with coloured audio bars and episodes opened out](docs/screenshots/main.png)
 
 Each season lands in one of four groups:
 
@@ -65,10 +65,14 @@ If your anime folder is on the same drive as Dub Checker, its path is saved with
 
 ## Using the app
 
-1. Choose **Scan from: Local files** and pick your library folder, or choose **Sonarr** (see below).
+The window looks like a Mac app: a glass sidebar on the left holds the tabs (under **Library**) and the scan
+controls (under **Scan**), with **Settings** at the top. The list fills the rest, with its title, **Search** and
+**Air status** above it and the scan's progress in a panel below it.
+
+1. In the sidebar's **Scan** section, choose **Local files** and pick your library folder with **Browse...**, or choose **Sonarr** (see below).
 2. Click **Scan library** (or press **F5**). **Stop** (or **Esc**) keeps everything finished so far.
 
-**Scanning only one tab.** The **Scan:** drop-down next to Scan library chooses what a scan covers: **Every show**, or only the shows in one tab, such as **Only Needs English Audio (12 shows)**.
+**Scanning only one tab.** The drop-down above Scan library chooses what a scan covers: **Every show**, or only the shows in one tab, such as **Only Needs English Audio (12 shows)**.
 - Only those shows are listed, read and looked up. Other show folders aren't even opened, so it's much quicker than a full scan. Every other result stays as it was.
 - Seasons of those shows that have gone from the library are removed. If you press Stop, seasons it hadn't reached keep their earlier results.
 - It needs one full scan first (from the same source), so Dub Checker knows which shows are in the tab. Dismissed shows are skipped.
@@ -90,10 +94,10 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
 
 **The results table**
 
-- **The cards at the top are the tabs.** They count shows, not seasons.
+- **The tabs are in the sidebar**, under Library, each with its number of shows (not seasons).
   - Click a tab to select it and click it again to deselect it. Several can be selected at once, and their shows are listed together with a **Group** column saying where each season is. With none selected, every show is listed.
-  - **Move a tab** by dragging it left or right, or right-click it and choose **Move left** or **Move right**. The order is remembered.
-  - **Hide a tab** by unticking it in the **Show tabs** row above the tabs, or right-click it and choose **Hide this tab**. Tick it again to bring it back. Hidden tabs stay hidden after a restart.
+  - **Move a tab** by dragging it up or down, or right-click it and choose **Move up** or **Move down**. The order is remembered.
+  - **Hide a tab** by unticking it in the **Edit** menu next to Library, or right-click it and choose **Hide this tab**. Tick it again to bring it back. Hidden tabs stay hidden after a restart.
 - **English Only tab and English only column:** the English Only tab lists seasons with episodes that only have English audio, so the original language (Japanese, Korean or Chinese) is missing. Replace them with dual-audio releases to get both. Like Airing, it cuts across the other groups, and the **English only** column counts these episodes in every tab.
 - **Airing tab and Air status column:** these show whether a show is still airing, not out yet, on hiatus, finished or cancelled, with the next episode's date while it airs (for example "Airing - ep 8 on 3 Oct"). The Airing tab lists shows that are still airing or not out yet, where an English dub may still be on its way. It cuts across the other groups. Click the **Air status** header to sort airing shows first.
 - A show with several seasons is a bold row. **To open or close a show or a season**, you can:
@@ -123,7 +127,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
   - **Search for replacements in Sonarr...** (when Sonarr is set up) asks Sonarr to look for new releases of the episodes that only have the original-language audio. When a season has English-only episodes, **Search for dual-audio replacements of the English-only episodes in Sonarr...** does the same for those. On an episode row it searches for just that episode. See [Sonarr](#sonarr).
   - **Search Nyaa for "... dual audio"** opens [nyaa.si](https://nyaa.si/) in your web browser, searching the Anime category for the show's name plus "dual audio", most seeders first. If AniList knows the show by another name (such as its romaji title, which many releases use), that search is offered too. The episode window has the same search as a button. Dub Checker only opens the search page; it doesn't download anything.
 - **Search** (Ctrl+F) narrows the list by name; Esc clears it.
-- **Air status** (the drop-down next to Search) lists only seasons that are Airing, Not yet aired, On hiatus, Finished, Cancelled or Not checked. It's hidden when air status is off.
+- **Air status** (the drop-down next to Search) lists only seasons that are Airing, Not yet aired, On hiatus, Finished, Cancelled or Not checked. The tab counts follow it, for example "1 of 19" when only 1 of a tab's 19 shows is finished. It's hidden when air status is off.
 - **Dismissing a show:** right-click it and choose **Dismiss this show**. It's hidden from every tab, the counts and exports, and stays hidden after a rescan. **Dismissed shows** above the list shows what you've dismissed and brings shows back.
 - **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group and air status.
 - **Your results are kept.** When you close Dub Checker and open it again, the last scan is back, with the same tab and open shows, and the status line says when it was made. A scan that was stopped, or still running when you closed the window, keeps the part that was finished.
@@ -157,7 +161,7 @@ Choose where air status comes from in **Settings > General > Air status**:
 
 ## Sonarr
 
-Choose **Scan from: Sonarr**, then open **Sonarr settings...**:
+Choose **Sonarr** in the sidebar's Scan section, then click **Change...** next to its address (or open **Settings > Sonarr**):
 
 - **Address:** e.g. `http://localhost:8989`. If you set a URL base in Sonarr, add it (`http://nas:8989/sonarr`).
 - **API key:** find it in Sonarr under Settings > General.
@@ -172,7 +176,7 @@ Choose **Scan from: Sonarr**, then open **Sonarr settings...**:
 
 **Searching for replacements.** Right-click a season or show (or use the button in the episode window) and choose **Search for replacements in Sonarr...**. Dub Checker finds the series in Sonarr by its folder name (or its title), matches your Japanese-only episodes to Sonarr's by file name, and starts an *EpisodeSearch* for exactly those episodes. If none can be matched (for example, the files were renamed since), it searches the whole season instead. This works after a Sonarr scan and after a Local files scan of a library Sonarr manages. Progress shows up on Sonarr's Activity page.
 
-**Tagging shows in Sonarr.** **Tag shows in Sonarr...** (next to Clear results, once Sonarr is set up) gives each show one of five Sonarr tags, so you can filter by them in Sonarr or use them in its custom formats and lists:
+**Tagging shows in Sonarr.** **Tag in Sonarr...** (next to Clear results in the sidebar, once Sonarr is set up) gives each show one of five Sonarr tags, so you can filter by them in Sonarr or use them in its custom formats and lists:
 
 | Tag | When |
 |---|---|
@@ -233,7 +237,7 @@ Everything is in `UserData/` next to the program:
 | `air_status_source` | `anilist` | Where air status comes from: `anilist`, `sonarr` or `off` |
 | `dub_grace_days` | 21 | How long a dub may follow the original before it counts as missing; 0 turns Dub Coming off |
 | `hidden_tabs` | none | The tabs you've hidden |
-| `tab_order` | default order | The order you've dragged the tabs into |
+| `tab_order` | default order | The order you've dragged the sidebar's tabs into |
 | `scan_scope` | `all` | What **Scan library** covers: `all`, or a tab such as `NEEDS_DUB` |
 | `schedule_enabled` / `schedule_scope` / `schedule_every_hours` | off / `NEEDS_DUB` / 24 | Scheduled scans (Settings > Schedule) |
 | `schedule_last_run` | 0 | When the schedule last ran (Unix time); the next scan is due this many hours later |
@@ -281,7 +285,8 @@ dubchecker/
   categorize.py   deciding the group and writing the notes
   sonarr.py       Sonarr API client, media info parsing, path mapping
   pipeline.py     the two-phase scan, the read throttle, scan statistics
-  theme.py        sv-ttk light/dark, palettes, Card.* styles, DPI font scaling, title bar
+  theme.py        sv-ttk light/dark, the macOS-style palettes, Card.* styles, DPI font scaling, title bar
+  glass.py        glass panels, capsule buttons, segmented control, search field (smooth shapes drawn into images)
   gui.py          main window
   dialogs.py      episode details, Dismissed shows, Fix match, Settings
   results_store.py  saving and loading the last scan's results (last_scan.json)

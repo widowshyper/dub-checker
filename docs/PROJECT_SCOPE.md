@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 2.9.0
+**Version:** 2.10.0
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -25,7 +25,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Results**
 - Every season is sorted into one of four groups: Needs English Audio, No Dub Exists, Fully Dubbed, or Check Manually.
-- The group cards act as tabs. You can select several at once, drag them into any order, and show or hide them with tick boxes.
+- The groups are tabs in a glass sidebar, with their counts. You can select several at once, drag them into any order, and show or hide them from the sidebar's Edit menu.
 - An English Only tab and column list seasons with episodes that only have English audio, to replace with dual-audio releases.
 - A Dub Coming tab holds seasons whose missing dubs are probably just late (simuldubs trail by a few weeks), using episode air dates from Sonarr or AniList, or the airing pattern when there are none.
 - An Airing tab and an Air status column show whether a show is airing, not out yet, on hiatus or finished, with the next episode date.
@@ -37,9 +37,13 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
   - amber: unlabeled;
   - grey: unreadable.
 - An episode window lists every audio track of each file.
-- Search, an Air status filter, sorting, and CSV export.
+- Search, an Air status filter (the tab counts follow it, e.g. "1 of 19 shows"), sorting, and CSV export.
 - Shows can be dismissed (hidden everywhere, even after a rescan) and brought back from a Dismissed shows window.
 - Results, open rows and selected tabs are kept after a restart. Clear results removes them.
+
+**Look**
+- A macOS-style design in light and dark: a floating glass sidebar, capsule buttons, a segmented Local files/Sonarr switch, a rounded search field, Apple's system colours, and a title bar that blends into the window on Windows 11.
+- Tk can't blur, so the glass is drawn: soft shadows, a bright top edge and smooth rounded corners.
 
 **Actions (right-click menu)**
 - Fix a wrong AniList match.
@@ -102,7 +106,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Build and test**
 - PyInstaller (`build.bat`) produces the portable one-folder app and zip.
-- A unittest suite of 305 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
+- A unittest suite of 315 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
 
 ## Out of scope
 

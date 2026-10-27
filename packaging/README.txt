@@ -54,7 +54,7 @@ web browser) and "Search for replacements in Sonarr...", which asks
 Sonarr to look for new releases of the episodes that only have the original
 language audio. "Search Nyaa for ... dual audio" opens a search on nyaa.si in
 your web browser.
-"Tag shows in Sonarr..." tags each show dual-audio (every episode has both
+"Tag in Sonarr..." (in the sidebar) tags each show dual-audio (every episode has both
 languages), missing-dub (an English dub exists but some episodes lack it),
 no-dub (no English dub exists) or english-only (some episodes have English but
 not the original language). Settings > Sonarr can do this after every scan.
@@ -66,12 +66,13 @@ so the original language is missing - replace those with dual-audio releases.
 Right-click one and choose "Search for dual-audio replacements of the
 English-only episodes in Sonarr..." (when Sonarr is set up).
 
-Click a tab at the top to select or deselect it; several can be selected at once,
-and with none selected every show is listed. Drag a tab left or right to move
-it. Untick a tab in the "Show tabs" row to hide it, and tick it to bring it
-back. The Airing tab and Air status column show which shows are still airing -
+The tabs are in the sidebar on the left, under Library. Click one to select
+or deselect it; several can be selected at once, and with none selected every
+show is listed. Drag a tab up or down to move it. Untick a tab in the "Edit"
+menu next to Library to hide it, and tick it to bring it back. The Airing tab and Air status column show which shows are still airing -
 a dub may still be on its way for those. The Air status drop-down above the
-list narrows it to shows that are airing, finished and so on.
+list narrows it to shows that are airing, finished and so on; the tab counts
+follow it (for example "1 of 19").
 Air status can come from AniList, from your Sonarr, or be switched off:
 Settings > General > Air status.
 

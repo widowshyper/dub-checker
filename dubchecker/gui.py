@@ -15,7 +15,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-from dubchecker import APP_NAME, __version__, theme
+from dubchecker import APP_NAME, __version__, glass, theme
 from dubchecker import ui_common as ui
 from dubchecker.cache import Cache
 from dubchecker.config import AIR_FILTERS, Config, Dismissed, Overrides
@@ -193,64 +193,66 @@ class AppContext:
             log.warning("Couldn't save settings: %s", exc)
 
 
-class SummaryCard(tk.Frame):
-    """A clickable card that acts as a tab: click to select or deselect it, drag it sideways to move it,
-    right-click for more."""
+class SidebarItem(tk.Canvas):
+    """A tab in the sidebar: click to select or deselect it, drag it up or down to move it, right-click for
+    more. Selected tabs sit on a rounded highlight, as in Finder's sidebar."""
 
     def __init__(self, app: App, parent: tk.Misc, tab: str) -> None:
-        super().__init__(parent, highlightthickness=max(1, round(app.scale)), cursor="hand2")
+        super().__init__(parent, height=app.px(30), width=1, highlightthickness=0, borderwidth=0, cursor="hand2")
         self.app = app
         self.tab = tab
         self.info = ui.TABS[tab]
         self.hover = False
         self.selected = False
         self.dragging = False
-        pad = round(14 * app.scale)
-        self.stripe = tk.Frame(self, height=round(4 * app.scale))
-        self.stripe.pack(fill="x", side="top")
-        self.count = tk.Label(self, text="-", font="SunValleyTitleFont", anchor="w")
-        self.count.pack(fill="x", padx=pad, pady=(round(8 * app.scale), 0))
-        self.title = tk.Label(self, text=self.info.title, font="SunValleyBodyStrongFont", anchor="w")
-        self.title.pack(fill="x", padx=pad)
-        self.caption = tk.Label(self, text="shows", font="SunValleyCaptionFont", anchor="w")
-        self.caption.pack(fill="x", padx=pad, pady=(0, round(10 * app.scale)))
-        for widget in (self, self.stripe, self.count, self.title, self.caption):
-            # Selecting happens on release, so a press that turns into a drag moves the tab instead.
-            widget.bind("<ButtonPress-1>", lambda e: app.card_press(tab, e))
-            widget.bind("<B1-Motion>", lambda e: app.card_drag(tab, e))
-            widget.bind("<ButtonRelease-1>", lambda e: app.card_release(tab, e))
-            widget.bind("<Button-3>", lambda e: app.tab_menu(tab, e))
-            if sys.platform == "darwin":
-                widget.bind("<Button-2>", lambda e: app.tab_menu(tab, e))
-            widget.bind("<Enter>", self._on_enter)
-            widget.bind("<Leave>", self._on_leave)
+        self._images: list[tk.PhotoImage] = []
+        self._pill = self.create_image(0, 0, anchor="nw")
+        self._dot = self.create_image(0, 0, anchor="w")
+        self._title = self.create_text(0, 0, text=self.info.title, anchor="w", font="SunValleyBodyFont")
+        self.count = glass.TextItem(self, self.create_text(0, 0, text="", anchor="e", font="SunValleyBodyFont"))
+        # Selecting happens on release, so a press that turns into a drag moves the tab instead.
+        self.bind("<ButtonPress-1>", lambda e: app.card_press(tab, e))
+        self.bind("<B1-Motion>", lambda e: app.card_drag(tab, e))
+        self.bind("<ButtonRelease-1>", lambda e: app.card_release(tab, e))
+        self.bind("<Button-3>", lambda e: app.tab_menu(tab, e))
+        if sys.platform == "darwin":
+            self.bind("<Button-2>", lambda e: app.tab_menu(tab, e))
+        self.bind("<Enter>", lambda _e: self._set_hover(True))
+        self.bind("<Leave>", lambda _e: self._set_hover(False))
+        self.bind("<Configure>", lambda _e: self.recolor())
 
-    def _on_enter(self, _event: Any) -> None:
-        self.hover = True
+    def _set_hover(self, hover: bool) -> None:
+        self.hover = hover
         self.recolor()
 
-    def _on_leave(self, _event: Any) -> None:
-        widget = self.winfo_containing(*self.winfo_pointerxy())
-        if widget is not None and str(widget).startswith(str(self)):
-            return  # moved onto one of our own labels
-        self.hover = False
-        self.recolor()
-
-    def set_count(self, value: int | None) -> None:
-        self.count.configure(text="-" if value is None else f"{value:,}")
-        self.caption.configure(text="show" if value == 1 else "shows")
+    def set_count(self, value: int | None, total: int | None = None) -> None:
+        """``total``: how many there are with the Air status filter off, when it's on ("3 of 19")."""
+        text = "" if value is None else f"{value:,}" if total is None else f"{value:,} of {total:,}"
+        self.itemconfigure(self.count.item, text=text)
 
     def recolor(self) -> None:
-        pal = self.app.palette
+        pal, px = self.app.palette, self.app.px
+        width = max(self.winfo_width(), px(120))
+        height = max(self.winfo_height(), int(self.cget("height")))
+        middle = height / 2
         color = pal[self.info.color]
-        bg = pal["card_selected"] if self.selected else pal["card_hover"] if self.hover or self.dragging else pal["card"]
-        edge = color if self.selected or self.dragging else pal["border"]
-        self.configure(background=bg, highlightbackground=edge, highlightcolor=edge,
-                       cursor="fleur" if self.dragging else "hand2")
-        self.stripe.configure(background=color)
-        self.count.configure(background=bg, foreground=color)
-        self.title.configure(background=bg, foreground=pal["fg"])
-        self.caption.configure(background=bg, foreground=pal["muted"])
+        row = pal["card_selected"] if self.selected or self.dragging else pal["card_hover"] if self.hover else ""
+        self.configure(background=pal["card"], cursor="fleur" if self.dragging else "hand2")
+        images = []
+        if row:
+            edge = (color, color) if self.dragging else ()
+            images.append(glass.stretched(self, glass.Look(px(7), row, pal["card"], *edge), width, height))
+            self.itemconfigure(self._pill, image=images[-1], state="normal")
+        else:
+            self.itemconfigure(self._pill, image="", state="hidden")  # the old image is about to go
+        images.append(glass.dot(self, color, row or pal["card"], px(10)))
+        self.itemconfigure(self._dot, image=images[-1])
+        self.coords(self._dot, px(11), middle)
+        self.coords(self._title, px(30), middle)
+        self.itemconfigure(self._title, fill=pal["fg"])
+        self.coords(self.count.item, width - px(11), middle)
+        self.itemconfigure(self.count.item, fill=pal["muted"])
+        self._images = images
 
 
 class App:
@@ -291,6 +293,8 @@ class App:
         self.results_source = self.config.scan_source  # where the results on screen came from
         self.results_time = 0.0
         self.results_stopped = False
+        self.surfaces: list[Any] = []            # glass-drawn widgets, repainted with the theme
+        self._card_frames: list[tk.Frame] = []   # plain frames on glass panels
 
         root.title(APP_NAME)
         self._set_icon()
@@ -331,220 +335,209 @@ class App:
         return round(value * self.scale)
 
     def _build(self) -> None:
+        """A glass sidebar on the left (tabs, scan controls, Settings); the list on the right, with its
+        title, search and filters above it and the scan's progress below."""
         root = self.root
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(4, weight=1)
-        pad = self.px(18)
-        self._build_header().grid(row=0, column=0, sticky="ew", padx=pad, pady=(pad, self.px(10)))
-        self._build_source_card().grid(row=1, column=0, sticky="ew", padx=pad)
-        self._build_cards().grid(row=2, column=0, sticky="ew", padx=pad, pady=(self.px(14), self.px(10)))
-        self._build_toolbar().grid(row=3, column=0, sticky="ew", padx=pad, pady=(0, self.px(6)))
-        self._build_table().grid(row=4, column=0, sticky="nsew", padx=pad)
-        self._build_footer().grid(row=5, column=0, sticky="ew", padx=pad, pady=(self.px(6), self.px(10)))
-
-    def _build_header(self) -> ttk.Frame:
-        header = ttk.Frame(self.root)
-        header.columnconfigure(1, weight=1)
-        try:
-            full = tk.PhotoImage(file=str(ui.asset_path("icon_256.png")))
-            self.logo = full.subsample(max(1, round(256 / (48 * self.scale))))
-            ttk.Label(header, image=self.logo).grid(row=0, column=0, rowspan=2, padx=(0, self.px(12)))
-        except tk.TclError as exc:
-            log.warning("Couldn't load the logo: %s", exc)
-        ttk.Label(header, text=APP_NAME, style="Title.TLabel").grid(row=0, column=1, sticky="sw")
-        ttk.Label(header, text="Find the anime in your library that's missing English dub audio.",
-                  style="Muted.TLabel").grid(row=1, column=1, sticky="nw")
-        ttk.Button(header, text="Settings", command=self.open_settings).grid(row=0, column=2, rowspan=2, sticky="e")
-        return header
+        root.columnconfigure(1, weight=1)
+        root.rowconfigure(0, weight=1)
+        gap = self.px(8)
+        self._build_sidebar().grid(row=0, column=0, sticky="ns", padx=(gap, 0), pady=gap)
+        content = ttk.Frame(root)
+        content.grid(row=0, column=1, sticky="nsew", padx=(self.px(16), self.px(20)), pady=(self.px(14), self.px(8)))
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(1, weight=1)
+        self._build_toolbar(content).grid(row=0, column=0, sticky="ew", pady=(0, self.px(12)))
+        self._build_table(content).grid(row=1, column=0, sticky="nsew")
+        self._build_activity(content).grid(row=2, column=0, sticky="ew", pady=(self.px(8), 0))
+        self._build_footer(content).grid(row=3, column=0, sticky="ew", pady=(self.px(4), 0))
 
     def _card_frame(self, parent: tk.Misc) -> tk.Frame:
-        frame = tk.Frame(parent, highlightthickness=max(1, round(self.scale)))
+        """A plain frame on a glass panel, in the panel's colour."""
+        frame = tk.Frame(parent, borderwidth=0, highlightthickness=0)
         self._card_frames.append(frame)
         return frame
 
-    def _build_source_card(self) -> tk.Frame:
-        self._card_frames: list[tk.Frame] = []
-        card = self._card_frame(self.root)
-        inner = self._card_frame(card)
-        inner.configure(highlightthickness=0)
-        inner.pack(fill="x", padx=self.px(16), pady=self.px(14))
-        inner.columnconfigure(0, weight=1)
+    def _build_sidebar(self) -> glass.GlassPanel:
+        panel = glass.GlassPanel(self.root, self, "sidebar", padding=10)
+        panel.configure(width=self.px(284))
+        panel.pack_propagate(False)
+        side = panel.body
+        side.columnconfigure(0, weight=1)
+        side.rowconfigure(3, weight=1)  # room between the tabs and the scan controls
 
-        row = self._card_frame(inner)
-        row.configure(highlightthickness=0)
-        row.grid(row=0, column=0, sticky="w")
+        header = self._card_frame(side)
+        header.grid(row=0, column=0, sticky="ew", pady=(self.px(2), self.px(16)))
+        header.columnconfigure(1, weight=1)
+        try:
+            full = tk.PhotoImage(file=str(ui.asset_path("icon_256.png")))
+            self.logo = full.subsample(max(1, round(256 / (34 * self.scale))))
+            ttk.Label(header, image=self.logo, style="Card.TLabel").grid(row=0, column=0, rowspan=2,
+                                                                         padx=(self.px(4), self.px(10)))
+        except tk.TclError as exc:
+            log.warning("Couldn't load the logo: %s", exc)
+        ttk.Label(header, text=APP_NAME, style="Card.Strong.TLabel").grid(row=0, column=1, sticky="sw")
+        ttk.Label(header, text=f"Version {__version__}", style="Card.Caption.TLabel").grid(row=1, column=1,
+                                                                                          sticky="nw")
+        glass.PillButton(header, self, "Settings", self.open_settings, backdrop="card", small=True).grid(
+            row=0, column=2, rowspan=2, sticky="e")
+
+        heading = self._card_frame(side)
+        heading.grid(row=1, column=0, sticky="ew", padx=self.px(10), pady=(0, self.px(4)))
+        heading.columnconfigure(0, weight=1)
+        ttk.Label(heading, text="Library", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        self.edit_tabs_link = ttk.Label(heading, text="Edit", style="Card.Link.TLabel", cursor="hand2")
+        self.edit_tabs_link.grid(row=0, column=1, sticky="e")
+        self.edit_tabs_link.bind("<Button-1>", self.open_tabs_menu)
+        self.tab_visible_vars = {tab: tk.BooleanVar(value=tab not in self.config.hidden_tabs) for tab in ui.TAB_IDS}
+
+        self.cards_frame = self._card_frame(side)
+        self.cards_frame.grid(row=2, column=0, sticky="ew")
+        self.cards_frame.columnconfigure(0, weight=1)
+        self.cards: dict[str, SidebarItem] = {tab: SidebarItem(self, self.cards_frame, tab) for tab in ui.TAB_IDS}
+        self.no_tabs_label = ttk.Label(self.cards_frame, text="Every tab is hidden. Click Edit to bring them back.",
+                                       style="Card.Caption.TLabel", wraplength=self.px(220))
+
+        self._build_scan_controls(side).grid(row=4, column=0, sticky="ew", pady=(self.px(12), self.px(4)))
+        return panel
+
+    def _build_scan_controls(self, parent: tk.Misc) -> tk.Frame:
+        """Where to scan from, how much to scan, and the buttons."""
+        box = self._card_frame(parent)
+        box.columnconfigure(0, weight=1)
+        ttk.Label(box, text="Scan", style="Section.TLabel").grid(row=0, column=0, sticky="w", padx=self.px(10),
+                                                                pady=(0, self.px(6)))
         self.source_var = tk.StringVar(value=self.config.scan_source)
-        ttk.Label(row, text="Scan from:", style="Card.TLabel").pack(side="left", padx=(0, self.px(10)))
-        self.source_buttons = [
-            ttk.Radiobutton(row, text="Local files", value="folder", variable=self.source_var,
-                            style="Card.TRadiobutton", command=self._on_source_change),
-            ttk.Radiobutton(row, text="Sonarr", value="sonarr", variable=self.source_var,
-                            style="Card.TRadiobutton", command=self._on_source_change),
-        ]
-        for button in self.source_buttons:
-            button.pack(side="left", padx=(0, self.px(14)))
+        self.source_switch = glass.SegmentedControl(box, self, self.source_var,
+                                                    [("folder", "Local files"), ("sonarr", "Sonarr")],
+                                                    command=self._on_source_change)
+        self.source_switch.grid(row=1, column=0, sticky="ew")
+        self.source_buttons = self.source_switch.segments
 
-        self.folder_row = self._card_frame(inner)
-        self.folder_row.configure(highlightthickness=0)
+        self.folder_row = self._card_frame(box)
         self.folder_row.columnconfigure(0, weight=1)
         self.folder_var = tk.StringVar(value=self.config.library_path)
-        self.folder_entry = ttk.Entry(self.folder_row, textvariable=self.folder_var, style="Card.TEntry")
-        self.folder_entry.grid(row=0, column=0, sticky="ew", padx=(0, self.px(8)))
+        self.folder_entry = ttk.Entry(self.folder_row, textvariable=self.folder_var, style="Card.TEntry", width=1)
+        self.folder_entry.grid(row=0, column=0, sticky="ew", padx=(0, self.px(6)))
         self.folder_entry.bind("<Return>", lambda _e: self.start_scan())
-        self.browse_button = ttk.Button(self.folder_row, text="Browse...", style="Card.TButton",
-                                        command=self.browse_folder)
+        self.browse_button = glass.PillButton(self.folder_row, self, "Browse...", self.browse_folder,
+                                              backdrop="card", small=True)
         self.browse_button.grid(row=0, column=1)
 
-        self.sonarr_row = self._card_frame(inner)
-        self.sonarr_row.configure(highlightthickness=0)
-        self.sonarr_label = ttk.Label(self.sonarr_row, style="Card.TLabel")
-        self.sonarr_label.pack(side="left", padx=(0, self.px(12)))
-        ttk.Button(self.sonarr_row, text="Sonarr settings...", style="Card.TButton",
-                   command=lambda: self.open_settings(tab=2)).pack(side="left")
+        self.sonarr_row = self._card_frame(box)
+        self.sonarr_row.columnconfigure(0, weight=1)
+        self.sonarr_label = ttk.Label(self.sonarr_row, style="Card.Muted.TLabel", wraplength=self.px(150))
+        self.sonarr_label.grid(row=0, column=0, sticky="w", padx=(self.px(4), self.px(6)))
+        glass.PillButton(self.sonarr_row, self, "Change...", lambda: self.open_settings(tab=2),
+                         backdrop="card", small=True).grid(row=0, column=1)
 
-        buttons = self._card_frame(inner)
-        buttons.configure(highlightthickness=0)
-        buttons.grid(row=2, column=0, sticky="w", pady=(self.px(12), 0))
-        ttk.Label(buttons, text="Scan:", style="Card.TLabel").pack(side="left", padx=(0, self.px(8)))
-        self.scope_box = ttk.Combobox(buttons, state="readonly", width=34)
-        self.scope_box.pack(side="left", padx=(0, self.px(8)))
+        self.scope_box = ttk.Combobox(box, state="readonly", width=1)
+        self.scope_box.grid(row=3, column=0, sticky="ew", pady=(self.px(10), 0))
         self.scope_box.bind("<<ComboboxSelected>>", self._on_scope_chosen)
         self._scope_ids: list[str] = []
-        self.scan_button = ttk.Button(buttons, text="Scan library", style="Card.Accent.TButton",
-                                      command=self.start_scan)
-        self.scan_button.pack(side="left")
-        self.stop_button = ttk.Button(buttons, text="Stop", style="Card.TButton", command=self.stop_scan)
-        self.stop_button.pack(side="left", padx=(self.px(8), 0))
-        self.clear_button = ttk.Button(buttons, text="Clear results", style="Card.TButton",
-                                       command=self.clear_results)
-        self.clear_button.pack(side="left", padx=(self.px(8), 0))
-        self.tag_button = ttk.Button(buttons, text="Tag shows in Sonarr...", style="Card.TButton",
-                                     command=self.tag_in_sonarr)
-        self.tag_button.pack(side="left", padx=(self.px(8), 0))
 
-        # While scanning: which step it's on and what that step does, in plain words.
-        self.phase_frame = self._card_frame(inner)
-        self.phase_frame.configure(highlightthickness=0)
-        self.phase_frame.grid(row=3, column=0, sticky="ew", pady=(self.px(14), 0))
-        self.phase_title = ttk.Label(self.phase_frame, style="Card.Strong.TLabel")
-        self.phase_title.pack(fill="x")
-        self.phase_detail = ttk.Label(self.phase_frame, style="Card.Muted.TLabel", wraplength=self.px(900))
-        self.phase_detail.pack(fill="x", pady=(self.px(2), 0))
-        self.progress = ttk.Progressbar(inner, style="Card.Horizontal.TProgressbar", maximum=100)
-        self.progress.grid(row=4, column=0, sticky="ew", pady=(self.px(10), 0))
-        self.status_var = tk.StringVar(value=READY_TEXT)
-        status = ttk.Label(inner, textvariable=self.status_var, style="Card.TLabel")
-        status.grid(row=5, column=0, sticky="ew", pady=(self.px(8), 0))
-        self.schedule_label = ttk.Label(inner, style="Card.Muted.TLabel")
-        self.schedule_label.grid(row=6, column=0, sticky="ew", pady=(self.px(4), 0))
+        buttons = self._card_frame(box)
+        buttons.grid(row=4, column=0, sticky="ew", pady=(self.px(10), 0))
+        buttons.columnconfigure(0, weight=1)
+        self.scan_button = glass.PillButton(buttons, self, "Scan library", self.start_scan, accent=True,
+                                            backdrop="card")
+        self.scan_button.grid(row=0, column=0, sticky="ew")
+        self.stop_button = glass.PillButton(buttons, self, "Stop", self.stop_scan, backdrop="card")
+        self.stop_button.grid(row=0, column=1, padx=(self.px(6), 0))
 
-        def wrap(event: Any) -> None:  # long lines wrap instead of running off the edge
-            width = max(self.px(300), event.width - 8)
-            for label in (self.phase_detail, status):
-                label.configure(wraplength=width)
-        inner.bind("<Configure>", wrap, add="+")
+        more = self._card_frame(box)
+        more.grid(row=5, column=0, sticky="w", pady=(self.px(4), 0))
+        self.clear_button = glass.PillButton(more, self, "Clear results", self.clear_results, backdrop="card",
+                                             small=True)
+        self.clear_button.grid(row=0, column=0)
+        self.tag_button = glass.PillButton(more, self, "Tag in Sonarr...", self.tag_in_sonarr, backdrop="card",
+                                           small=True)
+        self.tag_button.grid(row=0, column=1, padx=(self.px(4), 0))
         self._on_source_change(save=False)
-        return card
-
-    def _build_cards(self) -> ttk.Frame:
-        """The tabs: a row of tick boxes choosing which are on show, then the tab cards themselves."""
-        section = ttk.Frame(self.root)
-        section.columnconfigure(0, weight=1)
-        bar = ttk.Frame(section)
-        bar.grid(row=0, column=0, sticky="ew", pady=(0, self.px(8)))
-        bar.columnconfigure(1, weight=1)
-        ttk.Label(bar, text="Show tabs:", style="Strong.TLabel").grid(row=0, column=0, sticky="w",
-                                                                    padx=(0, self.px(10)))
-        self.tab_checks_frame = ttk.Frame(bar)
-        self.tab_checks_frame.grid(row=0, column=1, sticky="w")
-        self.tab_visible_vars: dict[str, tk.BooleanVar] = {}
-        self.tab_checks: dict[str, ttk.Checkbutton] = {}
-        for tab in ui.TAB_IDS:
-            variable = tk.BooleanVar(value=tab not in self.config.hidden_tabs)
-            self.tab_visible_vars[tab] = variable
-            self.tab_checks[tab] = ttk.Checkbutton(
-                self.tab_checks_frame, text=ui.TABS[tab].title, variable=variable,
-                command=lambda t=tab: self.set_tab_visible(t, self.tab_visible_vars[t].get()))
-        hint = ttk.Label(bar, text="Click a tab to list its shows, click again to deselect it. Drag a tab to move it.",
-                         style="Caption.TLabel")
-        hint.grid(row=0, column=2, sticky="e")
-
-        def make_room(event: Any) -> None:
-            needed = self.tab_checks_frame.winfo_reqwidth() + hint.winfo_reqwidth() + self.px(120)
-            if needed > event.width:
-                hint.grid_remove()
-            else:
-                hint.grid()
-        bar.bind("<Configure>", make_room, add="+")
-
-        self.cards_frame = ttk.Frame(section)
-        self.cards_frame.grid(row=1, column=0, sticky="ew")
-        self.cards: dict[str, SummaryCard] = {tab: SummaryCard(self, self.cards_frame, tab) for tab in ui.TAB_IDS}
-        return section
+        return box
 
     def _layout_cards(self) -> None:
-        """Lay out the tabs that aren't hidden in the user's order, sharing the width; hide the row if none
-        are left. The tick boxes follow the same order."""
+        """List the tabs that aren't hidden in the user's order."""
         visible = self.visible_tabs()
-        for column in range(len(ui.TAB_IDS)):
-            self.cards_frame.columnconfigure(column, weight=0, uniform="")
         for tab, card in self.cards.items():
             if tab not in visible:
                 card.grid_remove()
-        for column, tab in enumerate(visible):
-            self.cards_frame.columnconfigure(column, weight=1, uniform="cards")
-            self.cards[tab].grid(row=0, column=column, sticky="nsew",
-                                 padx=(0 if column == 0 else self.px(6),
-                                       0 if column == len(visible) - 1 else self.px(6)))
+        for row, tab in enumerate(visible):
+            self.cards[tab].grid(row=row, column=0, sticky="ew", pady=(0, self.px(2)))
         if visible:
-            self.cards_frame.grid()
+            self.no_tabs_label.grid_remove()
         else:
-            self.cards_frame.grid_remove()
-        for check in self.tab_checks.values():
-            check.pack_forget()
-        for tab in ui.ordered_tabs(self.config.tab_order):
-            if tab != ui.AIRING or self.air_status_on:  # no Airing tab when air status is off
-                self.tab_checks[tab].pack(side="left", padx=(0, self.px(16)))
+            self.no_tabs_label.grid(row=0, column=0, sticky="w", padx=self.px(10), pady=self.px(4))
         self._update_scope_box()
 
-    def _build_toolbar(self) -> ttk.Frame:
-        bar = ttk.Frame(self.root)
+    def tabs_menu(self) -> tk.Menu:
+        """The Library section's Edit menu: tick the tabs to show in the sidebar."""
+        menu = tk.Menu(self.root, tearoff=False)
+        for tab in ui.ordered_tabs(self.config.tab_order):
+            if tab != ui.AIRING or self.air_status_on:  # no Airing tab when air status is off
+                menu.add_checkbutton(label=ui.TABS[tab].title, variable=self.tab_visible_vars[tab],
+                                     command=lambda t=tab: self.set_tab_visible(t, self.tab_visible_vars[t].get()))
+        menu.add_separator()
+        menu.add_command(label="Show all tabs", command=self.show_all_tabs)
+        return menu
+
+    def open_tabs_menu(self, event: Any) -> None:
+        menu = self.tabs_menu()
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _build_toolbar(self, parent: tk.Misc) -> ttk.Frame:
+        bar = ttk.Frame(parent)
         bar.columnconfigure(0, weight=1)
-        self.group_title = ttk.Label(bar, style="Subtitle.TLabel")
+        self.group_title = ttk.Label(bar, style="LargeTitle.TLabel")
         self.group_title.grid(row=0, column=0, sticky="w")
         self.group_description = ttk.Label(bar, style="Muted.TLabel")
-        self.group_description.grid(row=1, column=0, sticky="w")
+        self.group_description.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(self.px(2), 0))
+        bar.bind("<Configure>", lambda e: self.group_description.configure(wraplength=max(self.px(300), e.width)),
+                 add="+")
 
         # Narrowing the list: search text and air status.
         filters = ttk.Frame(bar)
-        filters.grid(row=0, column=1, rowspan=2, sticky="e")
-        ttk.Label(filters, text="Search:").pack(side="left", padx=(0, self.px(6)))
+        filters.grid(row=0, column=1, sticky="e")
         self.filter_var = tk.StringVar()
-        self.filter_entry = ttk.Entry(filters, textvariable=self.filter_var, width=22)
-        self.filter_entry.pack(side="left")
+        self.search_field = glass.SearchField(filters, self, self.filter_var, width=self.px(220))
+        self.search_field.pack(side="left")
+        self.filter_entry = self.search_field.entry
         self.filter_entry.bind("<Escape>", self._clear_filter)
         self.filter_var.trace_add("write", lambda *_: self.refresh_table())
         self.air_filter_frame = ttk.Frame(filters)
-        self.air_filter_frame.pack(side="left", padx=(self.px(16), 0))
-        ttk.Label(self.air_filter_frame, text="Air status:").pack(side="left", padx=(0, self.px(6)))
+        self.air_filter_frame.pack(side="left", padx=(self.px(10), 0))
+        ttk.Label(self.air_filter_frame, text="Air status", style="Muted.TLabel").pack(side="left",
+                                                                                     padx=(0, self.px(6)))
         self.air_filter_box = ttk.Combobox(self.air_filter_frame, state="readonly", width=15,
                                            values=[ui.AIR_FILTER_LABELS[f] for f in AIR_FILTERS])
         self.air_filter_box.set(ui.AIR_FILTER_LABELS[self.config.air_filter])
         self.air_filter_box.pack(side="left")
         self.air_filter_box.bind("<<ComboboxSelected>>", self._on_air_filter)
 
-        legend = ttk.Frame(bar)
-        legend.grid(row=2, column=0, sticky="w", pady=(self.px(10), 0))
-        tools = ttk.Frame(bar)
-        tools.grid(row=2, column=1, sticky="e", pady=(self.px(10), 0))
-        self.dismissed_button = ttk.Button(tools, command=self.open_dismissed)
-        self.dismissed_button.pack(side="left", padx=(0, self.px(6)))
+        strip = ttk.Frame(bar)  # the audio key, and buttons for the list
+        strip.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(self.px(10), 0))
+        strip.columnconfigure(0, weight=1)
+        legend = ttk.Frame(strip)
+        legend.grid(row=0, column=0, sticky="w")
+        tools = ttk.Frame(strip)
+        tools.grid(row=0, column=1, sticky="e")
+
+        def make_room(event: Any) -> None:  # the buttons go under the key when both don't fit
+            if legend.winfo_reqwidth() + tools.winfo_reqwidth() + self.px(16) > event.width:
+                tools.grid_configure(row=1, column=0, pady=(self.px(6), 0))
+            else:
+                tools.grid_configure(row=0, column=1, pady=0)
+        strip.bind("<Configure>", make_room, add="+")
+        self.dismissed_button = glass.PillButton(tools, self, "Dismissed shows", self.open_dismissed, small=True)
+        self.dismissed_button.pack(side="left", padx=(0, self.px(4)))
         self._update_dismissed_button()
-        ttk.Button(tools, text="Expand all", command=lambda: self.expand_all(True)).pack(side="left")
-        ttk.Button(tools, text="Collapse all", command=lambda: self.expand_all(False)).pack(
-            side="left", padx=(self.px(6), 0))
-        ttk.Button(tools, text="Export list...", command=self.export_csv).pack(side="left", padx=(self.px(6), 0))
-        ttk.Label(legend, text="Audio key:", style="Caption.TLabel").pack(side="left", padx=(0, self.px(8)))
+        glass.PillButton(tools, self, "Expand all", lambda: self.expand_all(True), small=True).pack(side="left")
+        glass.PillButton(tools, self, "Collapse all", lambda: self.expand_all(False), small=True).pack(
+            side="left", padx=(self.px(4), 0))
+        glass.PillButton(tools, self, "Export list...", self.export_csv, small=True).pack(side="left",
+                                                                                        padx=(self.px(4), 0))
         self.legend_labels: list[tuple[ttk.Label, FileStatus | None]] = []
         for status, text in [*ui.LEGEND[:3], (None, "Dub on its way"), *ui.LEGEND[3:]]:
             label = ttk.Label(legend, text=text, compound="left", style="Caption.TLabel")
@@ -552,8 +545,8 @@ class App:
             self.legend_labels.append((label, status))
         return bar
 
-    def _build_table(self) -> ttk.Frame:
-        frame = ttk.Frame(self.root)
+    def _build_table(self, parent: tk.Misc) -> ttk.Frame:
+        frame = ttk.Frame(parent)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(frame, columns=[c[0] for c in COLUMNS], show=("tree", "headings"),
@@ -599,15 +592,42 @@ class App:
         self._update_headings()
         return frame
 
-    def _build_footer(self) -> ttk.Frame:
-        footer = ttk.Frame(self.root)
+    def _build_activity(self, parent: tk.Misc) -> glass.GlassPanel:
+        """A glass panel under the list: the scan's current step in plain words, its progress, and the
+        status line."""
+        panel = glass.GlassPanel(parent, self, "card", padding=12)
+        inner = panel.body
+        inner.columnconfigure(0, weight=1)
+        self.phase_frame = self._card_frame(inner)
+        self.phase_frame.grid(row=0, column=0, sticky="ew", pady=(0, self.px(8)))
+        self.phase_title = ttk.Label(self.phase_frame, style="Card.Strong.TLabel")
+        self.phase_title.pack(fill="x")
+        self.phase_detail = ttk.Label(self.phase_frame, style="Card.Muted.TLabel", wraplength=self.px(900))
+        self.phase_detail.pack(fill="x", pady=(self.px(2), 0))
+        self.progress = ttk.Progressbar(inner, style="Card.Horizontal.TProgressbar", maximum=100)
+        self.progress.grid(row=1, column=0, sticky="ew", pady=(0, self.px(8)))
+        self.status_var = tk.StringVar(value=READY_TEXT)
+        status = ttk.Label(inner, textvariable=self.status_var, style="Card.TLabel")
+        status.grid(row=2, column=0, sticky="ew")
+        self.schedule_label = ttk.Label(inner, style="Card.Muted.TLabel")
+        self.schedule_label.grid(row=3, column=0, sticky="ew", pady=(self.px(4), 0))
+
+        def wrap(event: Any) -> None:  # long lines wrap instead of running off the edge
+            width = max(self.px(300), event.width - 8)
+            for label in (self.phase_detail, status):
+                label.configure(wraplength=width)
+        inner.bind("<Configure>", wrap, add="+")
+        return panel
+
+    def _build_footer(self, parent: tk.Misc) -> ttk.Frame:
+        footer = ttk.Frame(parent)
         footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, style="Caption.TLabel",
-                  text="Tip: click a row's arrow or audio bar (or double-click it) to open it; double-click an "
-                       "episode for its audio tracks; right-click a show to fix its match, dismiss it and more. "
-                       "F5 scans, Esc stops.").grid(
-            row=0, column=0, sticky="w")
-        ttk.Label(footer, text=f"Version {__version__}", style="Caption.TLabel").grid(row=0, column=1, sticky="e")
+        tip = ttk.Label(footer, style="Caption.TLabel",
+                        text="Tip: click a row's arrow or audio bar (or double-click it) to open it; double-click an "
+                             "episode for its audio tracks; right-click a show to fix its match, dismiss it and more. "
+                             "F5 scans, Esc stops.")
+        tip.grid(row=0, column=0, sticky="w")
+        footer.bind("<Configure>", lambda e: tip.configure(wraplength=max(self.px(300), e.width)), add="+")
         return footer
 
     def _restore_geometry(self) -> None:
@@ -631,7 +651,9 @@ class App:
     def apply_palette(self) -> None:
         pal = self.palette
         for frame in self._card_frames:
-            frame.configure(background=pal["card"], highlightbackground=pal["border"], highlightcolor=pal["border"])
+            frame.configure(background=pal["card"])
+        for surface in self.surfaces:
+            surface.recolor()
         for card in self.cards.values():
             card.selected = card.tab in self.tabs
             card.recolor()
@@ -657,10 +679,10 @@ class App:
         source = self.source_var.get()
         if source == "sonarr":
             self.folder_row.grid_remove()
-            self.sonarr_row.grid(row=1, column=0, sticky="ew", pady=(self.px(10), 0))
+            self.sonarr_row.grid(row=2, column=0, sticky="ew", pady=(self.px(10), 0))
         else:
             self.sonarr_row.grid_remove()
-            self.folder_row.grid(row=1, column=0, sticky="ew", pady=(self.px(10), 0))
+            self.folder_row.grid(row=2, column=0, sticky="ew", pady=(self.px(10), 0))
         self.update_sonarr_summary()
         if save and source != self.config.scan_source:
             self.config.scan_source = source
@@ -680,13 +702,13 @@ class App:
         self.update_schedule_label()
 
     def update_sonarr_summary(self) -> None:
-        url = self.config.sonarr_url.strip() or "not set up yet"
+        url = re.sub(r"^https?://", "", self.config.sonarr_url.strip()).rstrip("/") or "Not set up yet"
         key = "" if self.config.sonarr_api_key.strip() else " (no API key yet)"
-        self.sonarr_label.configure(text=f"Sonarr: {url}{key}")
+        self.sonarr_label.configure(text=f"{url}{key}")
         if self.sonarr_configured:  # tagging is only offered once Sonarr is set up
-            self.tag_button.pack(side="left", padx=(self.px(8), 0))
+            self.tag_button.grid()
         else:
-            self.tag_button.pack_forget()
+            self.tag_button.grid_remove()
 
     def browse_folder(self) -> None:
         folder = filedialog.askdirectory(parent=self.root, title="Choose your anime folder",
@@ -974,26 +996,26 @@ class App:
         return [tab for tab in ui.ordered_tabs(self.config.tab_order) if tab not in self.config.hidden_tabs
                 and (tab != ui.AIRING or self.air_status_on)]
 
-    # Moving tabs: drag a card sideways, or right-click it and choose Move left / Move right.
+    # Moving tabs: drag one up or down the sidebar, or right-click it and choose Move up / Move down.
 
     def card_press(self, tab: str, event: Any) -> None:
-        self._drag = {"tab": tab, "x": event.x_root, "moved": False}
+        self._drag = {"tab": tab, "y": event.y_root, "moved": False}
 
     def card_drag(self, tab: str, event: Any) -> None:
         drag = self._drag
         if drag is None or drag["tab"] != tab:
             return
         if not drag["moved"]:
-            if abs(event.x_root - drag["x"]) < self.px(DRAG_THRESHOLD):
+            if abs(event.y_root - drag["y"]) < self.px(DRAG_THRESHOLD):
                 return  # still a click
             drag["moved"] = True
             self.cards[tab].dragging = True
             self.cards[tab].recolor()
         visible = self.visible_tabs()
         others = [t for t in visible if t != tab]
-        # The dragged tab goes before the first tab whose middle is still to the right of the pointer.
+        # The dragged tab goes before the first tab whose middle is still below the pointer.
         index = sum(1 for t in others
-                    if event.x_root > self.cards[t].winfo_rootx() + self.cards[t].winfo_width() / 2)
+                    if event.y_root > self.cards[t].winfo_rooty() + self.cards[t].winfo_height() / 2)
         self._set_visible_order(others[:index] + [tab] + others[index:])
 
     def card_release(self, tab: str, _event: Any) -> None:
@@ -1018,7 +1040,7 @@ class App:
         self._layout_cards()
 
     def move_tab(self, tab: str, step: int) -> None:
-        """Move a tab one place left (-1) or right (+1) among the tabs on show."""
+        """Move a tab one place up (-1) or down (+1) among the tabs on show."""
         visible = self.visible_tabs()
         if tab not in visible:
             return
@@ -1068,9 +1090,9 @@ class App:
         menu.add_command(label="Deselect all tabs (list every show)", command=lambda: self.select_tabs(set()))
         menu.add_separator()
         visible = self.visible_tabs()
-        menu.add_command(label="Move left", command=lambda: self.move_tab(tab, -1),
+        menu.add_command(label="Move up", command=lambda: self.move_tab(tab, -1),
                          state="normal" if visible and visible[0] != tab else "disabled")
-        menu.add_command(label="Move right", command=lambda: self.move_tab(tab, 1),
+        menu.add_command(label="Move down", command=lambda: self.move_tab(tab, 1),
                          state="normal" if visible and visible[-1] != tab else "disabled")
         menu.add_separator()
         menu.add_command(label="Hide this tab", command=lambda: self.set_tab_visible(tab, False))
@@ -1083,8 +1105,13 @@ class App:
 
     def update_cards(self) -> None:
         counts = self.model.counts() if (self.model.results or self.scanning) else None
+        # With an Air status filter, a card counts the shows it lists, out of all of them.
+        listed = self.model.counts(self.air_filter) if counts is not None and self.air_filter != "all" else None
         for tab, card in self.cards.items():
-            card.set_count(None if counts is None else counts[tab])
+            if listed is not None:
+                card.set_count(listed[tab], counts[tab])  # type: ignore[index]
+            else:
+                card.set_count(None if counts is None else counts[tab])
         self._update_scope_box(counts)
 
     # ------------------------------------------------------------ scanning one tab
@@ -1182,11 +1209,12 @@ class App:
         self.config.air_filter = next((f for f in AIR_FILTERS if ui.AIR_FILTER_LABELS[f] == label), "all")
         self.air_filter_box.selection_clear()
         self.ctx.save_config()
+        self.update_cards()
         self.refresh_table()
 
     def _show_air_filter(self) -> None:
         if self.air_status_on:
-            self.air_filter_frame.pack(side="left", padx=(self.px(16), 0))
+            self.air_filter_frame.pack(side="left", padx=(self.px(10), 0))
         else:
             self.air_filter_frame.pack_forget()
 
@@ -1639,7 +1667,7 @@ class App:
                 if ui.in_tabs(s, view) and ui.air_matches(s, self.air_filter)]
 
     def _focus_filter(self, _event: Any = None) -> str:
-        self.filter_entry.focus_set()
+        self.search_field.focus_entry()
         self.filter_entry.select_range(0, "end")
         return "break"
 

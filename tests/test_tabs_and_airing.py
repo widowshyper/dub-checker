@@ -59,6 +59,15 @@ class ModelTests(unittest.TestCase):
         counts = self.model.counts()
         self.assertEqual((counts["NEEDS_DUB"], counts["AIRING"], counts["CHECK"]), (2, 2, 1))
 
+    def test_counts_follow_the_air_filter(self) -> None:
+        """A tab's count matches what it lists with the Air status filter on."""
+        for air_filter in ("FINISHED", "RELEASING", "NONE"):
+            counts = self.model.counts(air_filter)
+            for tab in ui.TAB_IDS:
+                self.assertEqual(counts[tab], len(self.model.rows({tab}, air_filter=air_filter)), (air_filter, tab))
+        self.assertEqual(self.model.counts("FINISHED")["NEEDS_DUB"], 0)
+        self.assertEqual(self.model.counts("RELEASING")["NEEDS_DUB"], 1)
+
     def test_air_status_wording(self) -> None:
         with mock.patch("dubchecker.ui_common.time.localtime", return_value=time.gmtime(NOW + 3600)):
             airing = ui.air_status_text(season("A", 1, Category.NEEDS_DUB, "RELEASING", NOW + 3600), now=NOW)
@@ -246,10 +255,10 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(json.loads(self.ctx.config_path.read_text("utf-8"))["hidden_tabs"], ["NO_DUB"])
         for tab in ("NEEDS_DUB", "DUB_COMING", "FULLY_DUBBED", "CHECK", "ENGLISH_ONLY", "AIRING"):
             app.set_tab_visible(tab, False)
-        self.assertEqual(app.cards_frame.winfo_manager(), "")  # nothing left to show: the whole row goes
+        self.assertTrue(app.no_tabs_label.winfo_manager())  # nothing left: a hint says how to bring them back
         self.assertEqual(app.group_title.cget("text"), "All shows")
         app.show_all_tabs()
-        self.assertEqual(app.cards_frame.winfo_manager(), "grid")
+        self.assertEqual(app.no_tabs_label.winfo_manager(), "")
         self.assertTrue(all(card.winfo_manager() == "grid" for card in app.cards.values()))
         self.assertEqual(self.ctx.config.hidden_tabs, [])
 

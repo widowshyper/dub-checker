@@ -108,39 +108,53 @@ class WindowTests(unittest.TestCase):
         """The shows listed, by folder: rows are "p|<show>" or, for one-season shows, "s|<show>|S1"."""
         return [iid.split("|")[1] for iid in self.app.tree.get_children()]
 
-    def checks_order(self) -> list[str]:
-        return [str(w.cget("text")) for w in self.app.tab_checks_frame.pack_slaves()]
+    def menu_items(self) -> list[str]:
+        """The tick boxes in the Library section's Edit menu, in order."""
+        menu = self.app.tabs_menu()
+        try:
+            return [str(menu.entrycget(i, "label")) for i in range(menu.index("end") + 1)
+                    if menu.type(i) == "checkbutton"]
+        finally:
+            menu.destroy()
+
+    def tick(self, tab: str) -> None:
+        """Click a tab's tick box in the Edit menu."""
+        menu = self.app.tabs_menu()
+        try:
+            menu.invoke(self.menu_items().index(ui.TABS[tab].title))
+        finally:
+            menu.destroy()
 
     # ---------------------------------------------------------------- moving tabs
 
-    def test_move_left_and_right_is_remembered(self) -> None:
+    def test_move_up_and_down_is_remembered(self) -> None:
         app = self.app
         app.move_tab("AIRING", -1)
         self.assertEqual(app.visible_tabs(), ["NEEDS_DUB", "DUB_COMING", "NO_DUB", "FULLY_DUBBED", "CHECK", "AIRING",
                                               "ENGLISH_ONLY"])
-        self.assertEqual(int(app.cards["AIRING"].grid_info()["column"]), 5)
-        self.assertEqual(self.checks_order()[5], "Airing")  # the tick boxes follow
+        self.assertEqual(int(app.cards["AIRING"].grid_info()["row"]), 5)
+        self.assertEqual(self.menu_items()[5], "Airing")  # the Edit menu follows
         app.move_tab("NEEDS_DUB", 1)
         self.assertEqual(self.saved()["tab_order"][:2], ["DUB_COMING", "NEEDS_DUB"])
         app.move_tab("DUB_COMING", -1)  # already first: nothing happens
         self.assertEqual(app.visible_tabs()[0], "DUB_COMING")
 
     def fake_positions(self) -> None:
-        """The window is hidden in tests, so give each card a place on screen: 200 px wide, side by side."""
-        for column, tab in enumerate(self.app.visible_tabs()):
+        """The window is hidden in tests, so give each tab a place on screen: 30 px high, one under another."""
+        for row, tab in enumerate(self.app.visible_tabs()):
             card = self.app.cards[tab]
-            card.winfo_rootx = lambda c=column: c * 200
-            card.winfo_width = lambda: 200
+            card.winfo_rooty = lambda r=row: r * 30
+            card.winfo_height = lambda: 30
 
     def test_dragging_a_tab_moves_it_instead_of_selecting_it(self) -> None:
         app = self.app
         self.fake_positions()
-        app.card_press("CHECK", SimpleNamespace(x_root=700))
-        app.card_drag("CHECK", SimpleNamespace(x_root=705))  # a wobble, not a drag
+        app.card_press("CHECK", SimpleNamespace(y_root=135))
+        app.card_drag("CHECK", SimpleNamespace(y_root=140))  # a wobble, not a drag
         self.assertFalse(app.cards["CHECK"].dragging)
-        app.card_drag("CHECK", SimpleNamespace(x_root=150))  # over the first tab's right half
+        app.card_drag("CHECK", SimpleNamespace(y_root=22))  # over the first tab's lower half
         self.assertTrue(app.cards["CHECK"].dragging)
-        app.card_release("CHECK", SimpleNamespace(x_root=150))
+        app.card_release("CHECK", SimpleNamespace(y_root=22))
         self.assertEqual(app.visible_tabs(), ["NEEDS_DUB", "CHECK", "DUB_COMING", "NO_DUB", "FULLY_DUBBED",
                                               "ENGLISH_ONLY", "AIRING"])
         self.assertEqual(app.tabs, {"NEEDS_DUB"})  # not selected by the drag
@@ -149,8 +163,8 @@ class WindowTests(unittest.TestCase):
 
     def test_a_click_still_selects(self) -> None:
         app = self.app
-        app.card_press("CHECK", SimpleNamespace(x_root=700))
-        app.card_release("CHECK", SimpleNamespace(x_root=702))
+        app.card_press("CHECK", SimpleNamespace(y_root=135))
+        app.card_release("CHECK", SimpleNamespace(y_root=137))
         self.assertEqual(app.tabs, {"NEEDS_DUB", "CHECK"})
 
     def test_hidden_tabs_keep_their_place_when_others_move(self) -> None:
@@ -162,23 +176,25 @@ class WindowTests(unittest.TestCase):
 
     # ---------------------------------------------------------------- tick boxes
 
-    def test_tick_boxes_hide_and_show_tabs(self) -> None:
+    def test_edit_menu_hides_and_shows_tabs(self) -> None:
         app = self.app
-        self.assertEqual(self.checks_order(), [ui.TABS[t].title for t in ui.TAB_IDS])
-        app.tab_visible_vars["CHECK"].set(False)
-        app.tab_checks["CHECK"].invoke()  # ticks it again, as a click would
-        self.assertEqual(app.cards["CHECK"].winfo_manager(), "grid")
-        app.tab_checks["CHECK"].invoke()
+        self.assertEqual(self.menu_items(), [ui.TABS[t].title for t in ui.TAB_IDS])
+        self.tick("CHECK")
         self.assertEqual(app.cards["CHECK"].winfo_manager(), "")
         self.assertEqual(self.saved()["hidden_tabs"], ["CHECK"])
+        self.tick("CHECK")
+        self.assertEqual(app.cards["CHECK"].winfo_manager(), "grid")
         for tab in ui.TAB_IDS:
             app.set_tab_visible(tab, False)
-        self.assertTrue(app.tab_checks_frame.winfo_manager())  # the boxes stay, so tabs can come back
+        self.assertTrue(app.no_tabs_label.winfo_manager())  # says how to bring them back
+        self.assertTrue(app.edit_tabs_link.winfo_manager())
+        app.show_all_tabs()
+        self.assertEqual(app.no_tabs_label.winfo_manager(), "")
 
-    def test_airing_tick_box_goes_when_air_status_is_off(self) -> None:
+    def test_airing_menu_item_goes_when_air_status_is_off(self) -> None:
         self.ctx.config.air_status_source = "off"
         self.app.settings_saved()
-        self.assertNotIn("Airing", self.checks_order())
+        self.assertNotIn("Airing", self.menu_items())
         self.assertEqual(self.app.air_filter_frame.winfo_manager(), "")
 
     # ---------------------------------------------------------------- air status filter

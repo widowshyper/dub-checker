@@ -125,7 +125,7 @@ class ClearResultsTests(unittest.TestCase):
         self.root.update_idletasks()
         self.assertEqual(self.app.tree.get_children(), ())
         self.assertEqual(len(self.app.model), 0)
-        self.assertTrue(all(card.count.cget("text") == "-" for card in self.app.cards.values()))
+        self.assertTrue(all(card.count.cget("text") == "" for card in self.app.cards.values()))
         self.assertEqual(self.app.filter_var.get(), "")
         self.assertEqual(self.app.status_var.get(), "Ready.")
         self.assertEqual(self.app.progress.winfo_manager(), "")
