@@ -18,6 +18,7 @@ Each season lands in one of four groups:
 | **Needs English Audio** | An English dub exists, but some of your episodes only have the original (Japanese, Korean or Chinese) audio. |
 | **No Dub Exists** | No English dub was found, so there's nothing to replace yet. |
 | **Fully Dubbed** | Every episode already has English audio. |
+| **Dub Coming** | Would be Needs English Audio, but the missing dubs are probably just not out yet. English dubs of airing shows often come out a few weeks after each episode. See [Dubs on their way](#dubs-on-their-way). |
 | **Check Manually** | Dub Checker couldn't be sure. The Notes column says why (no AniList match, a low-confidence match, audio without a language label, a file that couldn't be read, or the dub couldn't be checked). |
 
 ## Screenshots
@@ -106,6 +107,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
   - green: dual audio (original language + English);
   - blue: English only;
   - red: original language only (Japanese, Korean or Chinese);
+  - purple: original language only, but the dub is probably on its way;
   - amber: unlabeled;
   - grey: couldn't be read.
 
@@ -126,6 +128,17 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
 - **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group and air status.
 - **Your results are kept.** When you close Dub Checker and open it again, the last scan is back, with the same tab and open shows, and the status line says when it was made. A scan that was stopped, or still running when you closed the window, keeps the part that was finished.
 - **Clear results** empties the table, resets the window and forgets the saved list, so it doesn't come back next time. Your settings, manual matches, and what Dub Checker knows about your files and AniList are kept, so the next scan is quick. To forget saved AniList answers, use **Settings > General > Clear saved online info**.
+
+## Dubs on their way
+
+English dubs of shows that are airing (simuldubs) often come out a few weeks after each episode. Without this, a show whose dub is simply running a few episodes behind would sit in Needs English Audio. Instead, recent episodes go to the **Dub Coming** tab, coloured purple in the audio bar, with a note such as "Dub on its way - expected by 3 Nov".
+
+- **Settings > General > Dubs can follow up to N days** sets the delay. The default is 21; 0 turns this off.
+- **With air dates:** an episode with only the original language that first aired less than N days ago is waiting for its dub. A season goes to Dub Coming when all its missing dubs are recent. One older missing episode keeps it in Needs English Audio, though the newest ones still show purple.
+- **Where the dates come from:** a scan looks them up as its last step, only for Needs English Audio seasons. Sonarr is asked first, matched by file name; this works for Local files scans too when Sonarr is set up. AniList's airing schedule is used for shows Sonarr doesn't have, matched by episode number.
+- **Without dates**, a season counts as Dub Coming while it's still airing, its dub has started (an episode with English comes first), and only its newest episodes lack English.
+- **No rescan needed:** the dates are saved with your results, and Dub Checker checks every hour. An episode whose dub hasn't turned up in time moves back to Needs English Audio by itself.
+- In Sonarr these shows are tagged `dub-pending` (see [Tagging shows in Sonarr](#sonarr)).
 
 ## Air status
 
@@ -159,7 +172,7 @@ Choose **Scan from: Sonarr**, then open **Sonarr settings...**:
 
 **Searching for replacements.** Right-click a season or show (or use the button in the episode window) and choose **Search for replacements in Sonarr...**. Dub Checker finds the series in Sonarr by its folder name (or its title), matches your Japanese-only episodes to Sonarr's by file name, and starts an *EpisodeSearch* for exactly those episodes. If none can be matched (for example, the files were renamed since), it searches the whole season instead. This works after a Sonarr scan and after a Local files scan of a library Sonarr manages. Progress shows up on Sonarr's Activity page.
 
-**Tagging shows in Sonarr.** **Tag shows in Sonarr...** (next to Clear results, once Sonarr is set up) gives each show one of four Sonarr tags, so you can filter by them in Sonarr or use them in its custom formats and lists:
+**Tagging shows in Sonarr.** **Tag shows in Sonarr...** (next to Clear results, once Sonarr is set up) gives each show one of five Sonarr tags, so you can filter by them in Sonarr or use them in its custom formats and lists:
 
 | Tag | When |
 |---|---|
@@ -167,8 +180,9 @@ Choose **Scan from: Sonarr**, then open **Sonarr settings...**:
 | `missing-dub` | An English dub exists, but some episodes only have the original language. That covers a mix of dual-audio and original-only episodes, and original-only episodes of a show AniList or the MAL-Dubs list says is dubbed (the Needs English Audio group). |
 | `no-dub` | Original-only episodes with no English dub to get (the No Dub Exists group). A show with a dubbed season and a season with no dub yet is `no-dub`. |
 | `english-only` | Every episode has English, but some have only English, with no original-language track (see the English Only tab). Dual-audio releases would add the original language back. |
+| `dub-pending` | The only episodes missing English are recent ones whose dub is on its way (the Dub Coming tab). |
 
-- Each show gets one tag. `missing-dub` and `no-dub` win over `english-only`, because a missing dub is the bigger gap.
+- Each show gets one tag. `missing-dub` and `no-dub` win over `dub-pending`, which wins over `english-only`. A dub that's really missing is the bigger gap.
 - A show gets no tag when something needs checking manually, or when a scan was stopped before it.
 - A show whose tag changes loses its old one. Your other Sonarr tags aren't touched, and nor are dismissed shows or shows Sonarr doesn't have.
 - The tags are created in Sonarr the first time they're needed.
@@ -217,6 +231,7 @@ Everything is in `UserData/` next to the program:
 | `pause_enabled` / `pause_every_files` / `pause_seconds` | off / 50 / 30 | Breaks while reading |
 | `ignore_commentary_tracks` | on | Tracks named "Commentary" don't count |
 | `air_status_source` | `anilist` | Where air status comes from: `anilist`, `sonarr` or `off` |
+| `dub_grace_days` | 21 | How long a dub may follow the original before it counts as missing; 0 turns Dub Coming off |
 | `hidden_tabs` | none | The tabs you've hidden |
 | `tab_order` | default order | The order you've dragged the tabs into |
 | `scan_scope` | `all` | What **Scan library** covers: `all`, or a tab such as `NEEDS_DUB` |

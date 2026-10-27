@@ -34,6 +34,11 @@ No Dub Exists        No English dub was found, so there's nothing to replace.
 Fully Dubbed         Every episode already has English audio.
 Check Manually       Dub Checker couldn't be sure - the Notes column says why.
 
+Dub Coming lists seasons whose missing dubs are probably just not out yet:
+English dubs of airing shows often come a few weeks after each episode. They
+move back to Needs English Audio by themselves if the dub doesn't turn up in
+time. Settings > General sets the delay (21 days by default).
+
 Click a season's arrow or audio bar (or double-click it) to list its episodes: a tick shows which are
 dual audio and which only have the original language. The coloured Audio bar
 shows every episode at a glance (green dual audio, blue English only, red

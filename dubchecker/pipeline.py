@@ -25,9 +25,9 @@ from dubchecker.dub_sources import LookupResult
 from dubchecker.media_probe import ProbeUnavailable, build_file_result
 from dubchecker.models import (Cancelled, Category, FileResult, FileStatus, ShowGroup, ShowResult, VideoFile, season_key,
                                air_from_match, season_sort_key, strip_id_tags)
-from dubchecker.scanner import FolderLister, group_show, is_network_path, list_library, natural_key
-from dubchecker.sonarr import (SonarrAirStatus, SonarrClient, SonarrError, last_path_part, map_path,
-                              tracks_from_media_info)
+from dubchecker.scanner import FolderLister, episode_number, group_show, is_network_path, list_library, natural_key
+from dubchecker.sonarr import (SeriesIndex, SonarrAirStatus, SonarrClient, SonarrError, aired_by_file, last_path_part,
+                              map_path, tracks_from_media_info)
 
 log = logging.getLogger(__name__)
 
@@ -230,10 +230,12 @@ class ScanPipeline:
     def progress(self, text: str, fraction: float | None = None, busy: bool = False) -> None:
         self.emit("progress", text, fraction, busy)
 
-    def phase(self, number: int, title: str, explanation: str) -> None:
-        """Say which step the scan is on, in words: shown above the progress bar."""
+    def phase(self, number: int | None, title: str, explanation: str) -> None:
+        """Say which step the scan is on, in words: shown above the progress bar. ``None`` is a short last
+        step that only some scans need."""
         steps = 2 if self.config.air_status_source == "off" else 3
-        self.emit("phase", f"Step {number} of {steps}: {title}", explanation)
+        heading = f"Step {number} of {steps}: {title}" if number is not None else f"Last step: {title}"
+        self.emit("phase", heading, explanation)
 
     def _check_cancel(self) -> None:
         if self.cancel.is_set():
@@ -251,13 +253,16 @@ class ScanPipeline:
     # ------------------------------------------------------------ entry point
 
     def run(self, root: str | None = None, sonarr: SonarrClient | None = None,
-            air_client: SonarrClient | None = None, only: set[str] | frozenset[str] | None = None) -> ScanOutcome:
+            air_client: SonarrClient | None = None, only: set[str] | frozenset[str] | None = None,
+            dates_client: SonarrClient | None = None) -> ScanOutcome:
         """Scan a folder (`root`) or Sonarr (`sonarr`). `air_client` is the Sonarr to ask for air status
-        when that's set to come from Sonarr; a Sonarr scan uses its own client.
+        when that's set to come from Sonarr; a Sonarr scan uses its own client. `dates_client` is the Sonarr
+        to ask when episodes aired (to tell a dub that's on its way from a missing one); AniList otherwise.
 
         `only` limits the scan to these shows (by folder name, as in ``ShowGroup.folder_name``). Other show
         folders aren't even listed, so rescanning one tab is much quicker than a full scan."""
         self.air_client = air_client or sonarr
+        self.dates_client = dates_client or self.air_client
         self.only = frozenset(only) if only is not None else None
         started = time.monotonic()
         outcome = ScanOutcome(stats=self.stats)
@@ -540,6 +545,8 @@ class ScanPipeline:
                 self._add_air_status(results, service)
             elif not self.stopped and self.config.air_status_source == "sonarr":
                 self._add_sonarr_air_status(results)
+            if not self.stopped:
+                self._add_air_dates(results)
         finally:
             self.stats.lookup_time = time.monotonic() - started
         return results
@@ -566,6 +573,72 @@ class ScanPipeline:
             if air is not None:
                 results[index] = dataclasses.replace(season, air=air)
                 updated.append(results[index])
+        if updated:
+            self.emit("results", updated)
+
+    def _add_air_dates(self, results: list[ShowResult]) -> None:
+        """Last step: when did the episodes still missing English first air? Simulcast dubs come out a few
+        weeks after the original, so recent ones are only waiting for theirs (see ui_common.mark_dub_timing).
+
+        Dates come from Sonarr, matched by file name, else from AniList's airing schedule, matched by episode
+        number. Seasons with no dates fall back to the airing pattern when the results are shown."""
+        if self.config.dub_grace_days <= 0:
+            return
+        todo = [i for i, r in enumerate(results)
+                if r.category is Category.NEEDS_DUB and r.original_only and not r.stopped]
+        if not todo:
+            return
+        self.phase(None, "Checking when the newest episodes aired",
+                   "English dubs of shows that are airing usually come out a few weeks after each episode. "
+                   "Episodes still inside that delay (Settings > General) go to Dub Coming instead of Needs "
+                   "English Audio, so only dubs that are really missing are flagged.")
+        index: SeriesIndex | None = None
+        if self.dates_client is not None:
+            try:
+                self.progress("Asking Sonarr when the episodes aired...", busy=True)
+                index = SeriesIndex(self.dates_client.series())
+            except SonarrError as exc:
+                log.warning("Couldn't get series from Sonarr for air dates: %s", exc)
+        by_series: dict[int, dict[str, int]] = {}
+        service: LookupService | None = None
+        updated: list[ShowResult] = []
+        for number, i in enumerate(todo):
+            if self.cancel.is_set():
+                self.stopped = True
+                break
+            r = results[i]
+            self.progress(f"Checking when episodes aired: season {number + 1} of {len(todo)} - "
+                          f"{r.group.display_title}", number / len(todo))
+            waiting = [f for f in r.files if f.status is FileStatus.ORIGINAL_ONLY]
+            dates: dict[str, int] = {}
+            series = index.find(r.group.folder_name, r.group.show_title) if index is not None else None
+            if series is not None and self.dates_client is not None:
+                try:
+                    if series.id not in by_series:
+                        by_series[series.id] = aired_by_file(self.dates_client, series.id)
+                    aired = by_series[series.id]
+                    dates = {f.name: aired[f.name.casefold()] for f in waiting if f.name.casefold() in aired}
+                except SonarrError as exc:
+                    log.warning("Couldn't get air dates for %s from Sonarr: %s", r.group.display_title, exc)
+            if not dates and r.match is not None:
+                try:
+                    if service is None:
+                        service = self.lookup_factory()
+                    schedule = getattr(service, "aired_episodes", lambda _id: {})(r.match.anilist_id)
+                except Cancelled:
+                    self.stopped = True
+                    break
+                except Exception as exc:  # AniList unreachable: the season falls back to the airing pattern
+                    log.warning("Couldn't get air dates for %s from AniList: %s", r.group.display_title, exc)
+                    schedule = {}
+                for f in waiting:
+                    episode = episode_number(f.name)
+                    if episode in schedule:
+                        dates[f.name] = schedule[episode]
+            if dates:
+                files = [dataclasses.replace(f, aired_at=dates[f.name]) if f.name in dates else f for f in r.files]
+                results[i] = dataclasses.replace(r, files=files)
+                updated.append(results[i])
         if updated:
             self.emit("results", updated)
 

@@ -93,7 +93,7 @@ class EpisodeDetailsDialog(Dialog):
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(0, weight=1)
         ttk.Label(top, text=result.group.display_title, style="Subtitle.TLabel").grid(row=0, column=0, sticky="w")
-        info = ui.GROUPS[result.category]
+        info = ui.TABS[ui.group_tab(result)]
         tk.Label(top, text=f"  {info.title}  ", font="SunValleyBodyStrongFont", background=pal[info.color],
                  foreground=pal["on_color"]).grid(row=0, column=1, sticky="e")
 
@@ -254,7 +254,7 @@ class DismissedDialog(Dialog):
         shows = self.app.model.by_show()
         for folder, info in self.app.ctx.dismissed.items():
             seasons = shows.get(folder, [])
-            groups = list(dict.fromkeys(s.category.value for s in seasons))
+            groups = list(dict.fromkeys(ui.group_title(s) for s in seasons))
             where = ", ".join(groups) if groups else "Not in the current results"
             when = time.strftime("%d %b %Y", time.localtime(info["dismissed_at"])) if info["dismissed_at"] else ""
             self.tree.insert("", "end", iid=folder, values=(info["title"], where, when))
@@ -366,6 +366,7 @@ class SettingsDialog(Dialog):
         self.threshold = tk.StringVar(value=str(cfg.confidence_threshold))
         self.expiry = tk.StringVar(value=str(cfg.cache_expiry_days))
         self.air_source = tk.StringVar(value=cfg.air_status_source)
+        self.dub_grace = tk.StringVar(value=str(cfg.dub_grace_days))
         self.workers = tk.StringVar(value=str(cfg.probe_workers))
         self.net_enabled = tk.BooleanVar(value=cfg.network_workers_enabled)
         self.net_workers = tk.StringVar(value=str(cfg.network_workers))
@@ -451,6 +452,17 @@ class SettingsDialog(Dialog):
         ttk.Label(row, text="days").pack(side="left", padx=(self.px(6), 0))
         self._setting(page, "Check AniList again after", row,
                       "Answers from AniList are saved and reused until then, which keeps rescans fast.")
+
+        self._heading(page, "Dubs on their way")
+        row = ttk.Frame(page)
+        self._spinbox(row, self.dub_grace, 0, 365).pack(side="left")
+        ttk.Label(row, text="days").pack(side="left", padx=(self.px(6), 0))
+        self._setting(page, "Dubs can follow up to", row,
+                      "English dubs of airing shows often come out a few weeks after each episode. A Japanese-only "
+                      "episode newer than this goes to Dub Coming instead of Needs English Audio, and moves back by "
+                      "itself if its dub doesn't turn up in time. Air dates come from Sonarr, or AniList for shows "
+                      "Sonarr doesn't have. Without dates, a show counts while it's still airing and only its newest "
+                      "episodes lack English. 0 turns this off.")
 
         self._heading(page, "Air status")
         choices = ttk.Frame(page)
@@ -671,6 +683,7 @@ class SettingsDialog(Dialog):
             pause_files = self._int(self.pause_files, "Read ... files", 1, 100000)
             pause_seconds = self._int(self.pause_seconds, "Pause ... seconds", 1, 3600)
             schedule_hours = self._int(self.schedule_hours, "Scan every ... hours", 1, 24 * 30)
+            dub_grace = self._int(self.dub_grace, "Dubs can follow up to ... days", 0, 365)
         except ValueError as exc:
             messagebox.showerror(APP_NAME, str(exc), parent=self)
             return
@@ -685,6 +698,7 @@ class SettingsDialog(Dialog):
         cfg.confidence_threshold = threshold
         cfg.cache_expiry_days = expiry
         cfg.air_status_source = self.air_source.get()
+        cfg.dub_grace_days = dub_grace
         cfg.probe_workers = workers
         cfg.network_workers_enabled = self.net_enabled.get()
         cfg.network_workers = net_workers

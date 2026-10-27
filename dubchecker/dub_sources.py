@@ -126,6 +126,10 @@ class DubLookup:
         return LookupResult(outcome.match, english_cast_listed(outcome.details),
                             self.maldubs.status(outcome.match.mal_id), notes)
 
+    def aired_episodes(self, anilist_id: int) -> dict[int, int]:
+        """Episode number -> when it first aired, from AniList's airing schedule."""
+        return self.matcher.client.aired_episodes(anilist_id)
+
 
 def make_online_lookup(cache: Cache, config: Config, data_dir: Path, cancel: threading.Event | None,
                        status: Callable[[str], None] | None) -> DubLookup:

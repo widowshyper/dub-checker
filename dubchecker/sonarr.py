@@ -189,6 +189,19 @@ def series_page_url(client: SonarrClient, folder_name: str, title: str) -> str:
     return f"{client.url}/series/{quote(series.title_slug)}"
 
 
+def aired_by_file(client: SonarrClient, series_id: int) -> dict[str, int]:
+    """File name (lower case) -> when its episode first aired (Unix time). A file holding several episodes
+    gets the latest of them."""
+    names = {ef["id"]: last_path_part(str(ef.get("path") or "")).casefold()
+             for ef in client.episode_files(series_id) if "id" in ef}
+    aired: dict[str, int] = {}
+    for episode in client.episodes(series_id):
+        name, when = names.get(episode.get("episodeFileId")), _timestamp(episode.get("airDateUtc"))
+        if name and when:
+            aired[name] = max(when, aired.get(name, when))
+    return aired
+
+
 def search_for_replacements(client: SonarrClient, folder_name: str, title: str, seasons: list[int | None],
                             file_names: list[str]) -> str:
     """Ask Sonarr to search again for the episodes whose files are named in ``file_names``.
@@ -241,8 +254,8 @@ class SeriesIndex:
 # ---------------------------------------------------------------- dub tags
 
 TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB = "dual-audio", "missing-dub", "no-dub"
-TAG_ENGLISH_ONLY = "english-only"
-DUB_TAGS = (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, TAG_ENGLISH_ONLY)
+TAG_ENGLISH_ONLY, TAG_DUB_PENDING = "english-only", "dub-pending"
+DUB_TAGS = (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, TAG_ENGLISH_ONLY, TAG_DUB_PENDING)
 
 
 @dataclass

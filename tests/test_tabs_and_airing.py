@@ -244,7 +244,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app.cards["NO_DUB"].winfo_manager(), "")
         self.assertNotIn("NO_DUB", app.tabs)
         self.assertEqual(json.loads(self.ctx.config_path.read_text("utf-8"))["hidden_tabs"], ["NO_DUB"])
-        for tab in ("NEEDS_DUB", "FULLY_DUBBED", "CHECK", "ENGLISH_ONLY", "AIRING"):
+        for tab in ("NEEDS_DUB", "DUB_COMING", "FULLY_DUBBED", "CHECK", "ENGLISH_ONLY", "AIRING"):
             app.set_tab_visible(tab, False)
         self.assertEqual(app.cards_frame.winfo_manager(), "")  # nothing left to show: the whole row goes
         self.assertEqual(app.group_title.cget("text"), "All shows")

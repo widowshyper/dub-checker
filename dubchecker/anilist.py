@@ -25,6 +25,9 @@ DETAILS_QUERY = ("query ($id: Int) { Media(id: $id, type: ANIME) { %s nextAiring
                  "relations { edges { relationType node { %s } } } "
                  "characters(perPage: 25, sort: [ROLE, RELEVANCE]) { edges { node { id } "
                  "voiceActors(language: ENGLISH) { id } } } } }" % (MEDIA_FIELDS, MEDIA_FIELDS))
+# The latest aired episodes, newest first, for working out whether a dub may still be on its way.
+AIRED_QUERY = ("query ($id: Int) { Page(perPage: 50) { airingSchedules(mediaId: $id, notYetAired: false, "
+               "sort: TIME_DESC) { episode airingAt } } }")
 SEQUEL_FORMATS = frozenset({"TV", "TV_SHORT", "ONA"})
 AIRING_REFRESH_DAYS = 0.5  # saved details of a show that's still airing are checked again after 12 hours
 
@@ -91,6 +94,14 @@ class AniListClient:
 
         data = self._query(f"media:{media_id}", DETAILS_QUERY, {"id": int(media_id)}, usable)
         return (data or {}).get("Media")
+
+    def aired_episodes(self, media_id: int) -> dict[int, int]:
+        """Episode number -> when it first aired (Unix time), for the latest 50 aired episodes. A saved
+        answer is reused for 12 hours, since a show that's airing adds episodes."""
+        data = self._query(f"aired:{media_id}", AIRED_QUERY, {"id": int(media_id)},
+                           lambda _data, age_days: age_days <= AIRING_REFRESH_DAYS)
+        nodes = ((data or {}).get("Page") or {}).get("airingSchedules") or []
+        return {int(n["episode"]): int(n["airingAt"]) for n in nodes if n.get("episode") and n.get("airingAt")}
 
     def _query(self, key: str, query: str, variables: dict,
                usable: Callable[[dict | None, float], bool] | None = None) -> dict | None:

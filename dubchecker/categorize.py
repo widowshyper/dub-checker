@@ -6,7 +6,7 @@ from collections import Counter
 from dubchecker.dub_sources import SOURCE_FILES, LookupResult, combine_dub_signals
 from dubchecker.models import (AniListMatch, Category, DubInfo, FileResult, FileStatus, ShowGroup, ShowResult,
                                language_word)
-from dubchecker.sonarr import TAG_DUAL_AUDIO, TAG_ENGLISH_ONLY, TAG_MISSING_DUB, TAG_NO_DUB
+from dubchecker.sonarr import TAG_DUAL_AUDIO, TAG_DUB_PENDING, TAG_ENGLISH_ONLY, TAG_MISSING_DUB, TAG_NO_DUB
 
 STOPPED_NOTE = "Scan was stopped before this show was checked"
 
@@ -108,15 +108,19 @@ def dub_tag(seasons: list[ShowResult]) -> str | None:
     * "dual-audio": every episode has both the original language and English.
     * "english-only": every episode has English, but some have only English (no original language), so
       dual-audio releases would add it back.
+    * "dub-pending": the only episodes missing English are recent ones whose dub is still on its way
+      (``ShowResult.dub_coming``, see ui_common.mark_dub_timing).
 
     A show with anything to check manually (or a scan stopped before it) gets none.
     """
     if not seasons or any(s.category is Category.CHECK or s.stopped for s in seasons):
         return None
-    if any(s.category is Category.NEEDS_DUB for s in seasons):
+    if any(s.category is Category.NEEDS_DUB and not s.dub_coming for s in seasons):
         return TAG_MISSING_DUB
     if any(s.category is Category.NO_DUB for s in seasons):
         return TAG_NO_DUB
+    if any(s.dub_coming for s in seasons):
+        return TAG_DUB_PENDING
     statuses = {f.status for s in seasons for f in s.files}
     if statuses == {FileStatus.DUAL}:
         return TAG_DUAL_AUDIO

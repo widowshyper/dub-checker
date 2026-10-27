@@ -107,6 +107,7 @@ class FileResult:
     error: str = ""
     source: str = "disk"  # "disk", "cache" or "sonarr"
     note: str = ""
+    aired_at: int | None = None  # when this episode first aired (Unix time); only looked up while a dub is due
 
     @property
     def name(self) -> str:
@@ -224,6 +225,11 @@ class ShowResult:
     looked_up: bool = False
     stopped: bool = False
     air: AirInfo | None = None
+    # Worked out by ui_common.mark_dub_timing whenever results are shown, not saved: simulcast dubs come out
+    # a few weeks after the original, so the newest original-only episodes may just be waiting for theirs.
+    dub_coming: bool = field(default=False, compare=False)          # every missing dub is still on its way
+    dub_expected: int | None = field(default=None, compare=False)   # when the last of them should be out
+    pending: frozenset = field(default=frozenset(), compare=False)  # indexes of the episodes still waiting
 
     @property
     def key(self) -> str:

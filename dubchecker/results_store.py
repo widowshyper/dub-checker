@@ -47,7 +47,7 @@ def _track_to_dict(t: AudioTrack) -> dict:
 def _file_to_dict(f: FileResult) -> dict:
     data = {"path": to_portable(f.path), "size": f.size, "mtime": f.mtime, "status": f.status.name,
             "tracks": [_track_to_dict(t) for t in f.tracks]}
-    for name, default in (("error", ""), ("source", "disk"), ("note", "")):
+    for name, default in (("error", ""), ("source", "disk"), ("note", ""), ("aired_at", None)):
         if getattr(f, name) != default:
             data[name] = getattr(f, name)
     return data
@@ -86,7 +86,8 @@ def _file_from_dict(d: dict) -> FileResult:
     status = _RENAMED_STATUSES.get(d["status"], d["status"])
     return FileResult(path=from_portable(d["path"]), size=int(d.get("size") or 0), mtime=float(d.get("mtime") or 0),
                       tracks=tracks, status=FileStatus[status], error=d.get("error", ""),
-                      source=d.get("source", "disk"), note=d.get("note", ""))
+                      source=d.get("source", "disk"), note=d.get("note", ""),
+                      aired_at=int(d["aired_at"]) if d.get("aired_at") else None)
 
 
 def _result_from_dict(d: dict) -> ShowResult:

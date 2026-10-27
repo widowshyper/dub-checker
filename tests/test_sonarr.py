@@ -44,8 +44,10 @@ FILES = {
          "mediaInfo": {"audioLanguages": "jpn", "audioStreamCount": 2}}],
 }
 EPISODES = {
-    1: [{"id": 101, "seasonNumber": 1, "episodeFileId": 11}, {"id": 102, "seasonNumber": 2, "episodeFileId": 12},
-        {"id": 103, "seasonNumber": 2, "episodeFileId": 13}, {"id": 104, "seasonNumber": 2, "episodeFileId": 0}],
+    1: [{"id": 101, "seasonNumber": 1, "episodeFileId": 11, "airDateUtc": "2013-04-06T15:00:00Z"},
+        {"id": 102, "seasonNumber": 2, "episodeFileId": 12, "airDateUtc": "2017-04-01T15:00:00Z"},
+        {"id": 103, "seasonNumber": 2, "episodeFileId": 13, "airDateUtc": "2017-04-08T15:00:00Z"},
+        {"id": 104, "seasonNumber": 2, "episodeFileId": 0, "airDateUtc": "2017-04-15T15:00:00Z"}],
     3: [{"id": 301, "seasonNumber": 1, "episodeFileId": 31}],
 }
 COMMANDS: list[dict] = []  # bodies POSTed to /command

@@ -90,10 +90,11 @@ class SonarrTaggingTests(unittest.TestCase):
             {"seriesIds": [1], "tags": [ids["no-dub"]], "applyTags": "remove"},  # its old dub tag goes
             {"seriesIds": [1], "tags": [ids["missing-dub"]], "applyTags": "add"},
             {"seriesIds": [3], "tags": [ids["dual-audio"]], "applyTags": "add"}])
-        self.assertEqual(report.tagged, {"dual-audio": 1, "missing-dub": 1, "no-dub": 0, "english-only": 0})
+        self.assertEqual(report.tagged, {"dual-audio": 1, "missing-dub": 1, "no-dub": 0, "english-only": 0,
+                                         "dub-pending": 0})
         self.assertEqual((report.changed, report.not_in_sonarr), (2, 1))
-        self.assertEqual(report.text(), "Sonarr tags: 1 dual-audio, 1 missing-dub, 0 no-dub, 0 english-only "
-                                        "(2 shows changed). 1 not found in Sonarr.")
+        self.assertEqual(report.text(), "Sonarr tags: 1 dual-audio, 1 missing-dub, 0 no-dub, 0 english-only, "
+                                        "0 dub-pending (2 shows changed). 1 not found in Sonarr.")
 
     def test_nothing_changes_when_the_tag_is_already_right(self) -> None:
         report = apply_dub_tags(SonarrClient(self.url, API_KEY), {("Attack on Titan (2013)", "x"): "no-dub"})
@@ -105,7 +106,7 @@ class SonarrTaggingTests(unittest.TestCase):
         self.assertEqual(len(TAGS), 2)  # nothing created that isn't used
 
     def test_tag_names(self) -> None:
-        self.assertEqual(DUB_TAGS, ("dual-audio", "missing-dub", "no-dub", "english-only"))
+        self.assertEqual(DUB_TAGS, ("dual-audio", "missing-dub", "no-dub", "english-only", "dub-pending"))
 
     def test_english_only_tag_is_created_and_swapped_in(self) -> None:
         apply_dub_tags(SonarrClient(self.url, API_KEY), {("Attack on Titan (2013)", "x"): "english-only"})
@@ -172,7 +173,8 @@ class WindowTests(unittest.TestCase):
         self.assertIn("no-dub: 0 shows", question)
         self.assertIn("english-only: 1 show", question)
         self.assertEqual(self.app.status_var.get(), "Sonarr tags: 1 dual-audio, 1 missing-dub, 0 no-dub, "
-                                                    "0 english-only (2 shows changed). 1 not found in Sonarr.")
+                                                    "0 english-only, 0 dub-pending (2 shows changed). "
+                                                    "1 not found in Sonarr.")
         self.assertEqual(len(TAG_EDITS), 3)
 
     def test_saying_no_changes_nothing(self) -> None:

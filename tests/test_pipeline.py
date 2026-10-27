@@ -158,7 +158,8 @@ class PipelineTests(unittest.TestCase):
         phases = [e[1:] for e in events if e[0] == "phase"]
         self.assertEqual([title for title, _ in phases],  # air status is off here, so there are two steps
                          ["Step 1 of 2: Reading your episode files",
-                          "Step 2 of 2: Checking online whether English dubs exist"])
+                          "Step 2 of 2: Checking online whether English dubs exist",
+                          "Last step: Checking when the newest episodes aired"])  # A Show S1 waits for English
         self.assertIn("2 seasons have no English audio in your files", phases[1][1])
         self.assertIn("The other 3 seasons already have dual-audio files", phases[1][1])
 

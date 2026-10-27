@@ -24,7 +24,8 @@ AIR_SOURCES = ("anilist", "sonarr", "off")
 # The Air status drop-down above the list: "all", an AniList status, or "NONE" (not checked).
 AIR_FILTERS = ("all", "RELEASING", "NOT_YET_RELEASED", "HIATUS", "FINISHED", "CANCELLED", "NONE")
 # What a scan covers: every show, or only the shows in one tab (ui_common.TAB_IDS).
-SCAN_SCOPES = ("all", *(c.name for c in Category), "ENGLISH_ONLY", "AIRING")
+SCAN_SCOPES = ("all", "NEEDS_DUB", "DUB_COMING", *(c.name for c in Category if c is not Category.NEEDS_DUB),
+               "ENGLISH_ONLY", "AIRING")
 
 
 @functools.cache
@@ -134,6 +135,7 @@ class Config:
     sonarr_tag_after_scan: bool = False    # tag shows dual-audio / missing-dub / no-dub in Sonarr after each scan
     window_geometry: str = ""
     air_status_source: str = "anilist"            # where air status comes from: "anilist", "sonarr" or "off"
+    dub_grace_days: int = 21                       # a dub may follow the original by this long (0 = off)
     hidden_tabs: list = field(default_factory=list)  # names of the group tabs you've hidden
     tab_order: list = field(default_factory=list)    # the tabs in the order you've dragged them into
     air_filter: str = "all"                          # the Air status drop-down above the list (AIR_FILTERS)
@@ -210,6 +212,7 @@ class Config:
         if self.schedule_scope not in SCAN_SCOPES:
             self.schedule_scope = "NEEDS_DUB"
         self.schedule_every_hours = min(24 * 30, max(1, self.schedule_every_hours))
+        self.dub_grace_days = min(365, max(0, self.dub_grace_days))
 
     def forget_unreadable_key(self) -> None:
         """The user has seen the empty key field in Settings, so an old undecryptable key can go."""

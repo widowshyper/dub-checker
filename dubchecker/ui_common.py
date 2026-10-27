@@ -46,20 +46,27 @@ GROUPS: dict[Category, GroupInfo] = {
         "amber", "Nothing to check - Dub Checker was sure about everything."),
 }
 
-# The tabs: the four groups (by Category name) plus English Only and Airing, which cut across them.
+# The tabs: the four groups (by Category name) and Dub Coming - seasons from Needs English Audio whose
+# missing dubs are all still on their way - plus English Only and Airing, which cut across them.
+DUB_COMING = "DUB_COMING"
 ENGLISH_ONLY = "ENGLISH_ONLY"
 AIRING = "AIRING"
-TAB_IDS: tuple[str, ...] = (*(c.name for c in Category), ENGLISH_ONLY, AIRING)
+TAB_IDS: tuple[str, ...] = (Category.NEEDS_DUB.name, DUB_COMING,
+                            *(c.name for c in Category if c is not Category.NEEDS_DUB), ENGLISH_ONLY, AIRING)
 CROSS_TABS = frozenset({ENGLISH_ONLY, AIRING})  # a season can be in one of these as well as its group
 TABS: dict[str, GroupInfo] = {
     **{c.name: info for c, info in GROUPS.items()},
+    DUB_COMING: GroupInfo(
+        "Dub Coming", "The English dub is on its way: these episodes aired recently, and dubs usually follow a "
+                      "few weeks behind.",
+        "purple", "Nothing here - no dub is on its way right now."),
     ENGLISH_ONLY: GroupInfo(
         "English Only", "Some episodes only have English audio. Replace them with dual-audio releases to get the "
                         "original language back too.",
         "blue", "Nothing here - no episode is missing its original-language audio."),
     AIRING: GroupInfo(
         "Airing", "Still airing or not out yet, so an English dub may still be on its way.",
-        "purple", "Nothing airing - or air status hasn't been checked yet. Scan again, or choose where it comes "
+        "teal", "Nothing airing - or air status hasn't been checked yet. Scan again, or choose where it comes "
                   "from in Settings > General > Air status."),
 }
 
@@ -134,7 +141,75 @@ def match_text(r: ShowResult) -> str:
 
 
 def notes_text(r: ShowResult) -> str:
-    return "; ".join(r.notes)
+    return "; ".join(([dub_coming_note(r)] if r.dub_coming else []) + list(r.notes))
+
+
+def short_date(when: float) -> str:
+    """e.g. '3 Nov'."""
+    local = time.localtime(when)
+    return f"{local.tm_mday} {time.strftime('%b', local)}"
+
+
+def dub_coming_note(r: ShowResult) -> str:
+    if r.dub_expected:
+        return f"Dub on its way - expected by {short_date(r.dub_expected)}"
+    return "Dub on its way - still airing, and the dub is catching up"
+
+
+def pending_note(r: ShowResult) -> str:
+    """Added to an episode waiting for its dub."""
+    return f"dub expected by {short_date(r.dub_expected)}" if r.dub_expected else "dub on its way"
+
+
+def group_tab(r: ShowResult) -> str:
+    """The tab a season's group is shown as: its category, or Dub Coming."""
+    return DUB_COMING if r.dub_coming else r.category.name
+
+
+def group_title(r: ShowResult) -> str:
+    return TABS[group_tab(r)].title
+
+
+def display_code(r: ShowResult) -> str:
+    """``audio_code`` with "p" for the episodes still waiting for their dub, for the audio bars."""
+    if not r.pending:
+        return r.audio_code
+    return "".join("p" if i in r.pending else letter for i, letter in enumerate(r.audio_code))
+
+
+DAY = 86400
+
+
+def mark_dub_timing(r: ShowResult, grace_days: int, now: float | None = None) -> bool:
+    """Work out whether a Needs English Audio season's missing dubs are probably just not out yet, since
+    dubs of airing shows usually follow a few weeks behind. Sets ``pending``, ``dub_coming`` and
+    ``dub_expected``; returns whether ``dub_coming`` changed.
+
+    * With air dates (``FileResult.aired_at``, from Sonarr or AniList): an original-only episode that aired
+      less than ``grace_days`` ago is waiting for its dub. The season is Dub Coming when all of them are.
+    * Without any: the season is Dub Coming while it's still airing, its dub has started (an episode with
+      English comes first), and only the newest episodes lack English - the dub catching up.
+    """
+    was = r.dub_coming
+    r.dub_coming, r.dub_expected, r.pending = False, None, frozenset()
+    if grace_days <= 0 or r.category is not Category.NEEDS_DUB or r.stopped:
+        return was
+    now = time.time() if now is None else now
+    waiting = [i for i, f in enumerate(r.files) if f.status is FileStatus.ORIGINAL_ONLY]
+    if not waiting:
+        return was
+    dated = {i: r.files[i].aired_at for i in waiting if r.files[i].aired_at}
+    if dated:
+        recent = {i for i, aired in dated.items() if aired + grace_days * DAY > now}
+        r.pending = frozenset(recent)
+        if recent and len(recent) == len(waiting):  # every missing dub is recent; an undated one counts as missing
+            r.dub_coming, r.dub_expected = True, int(max(dated.values()) + grace_days * DAY)
+    elif r.air is not None and r.air.still_airing:
+        first = waiting[0]
+        started = any(f.status in (FileStatus.DUAL, FileStatus.ENGLISH_ONLY) for f in r.files[:first])
+        if started and all(f.status is FileStatus.ORIGINAL_ONLY for f in r.files[first:]):
+            r.dub_coming, r.pending = True, frozenset(waiting)
+    return r.dub_coming != was
 
 
 def season_name(r: ShowResult) -> str:
@@ -180,7 +255,7 @@ def in_tabs(r: ShowResult, tabs: set[str]) -> bool:
     """Whether a season is listed when these tabs are selected. No tabs selected lists everything."""
     if not tabs:
         return True
-    return (r.category.name in tabs
+    return (group_tab(r) in tabs
             or (ENGLISH_ONLY in tabs and r.english_only > 0)
             or (AIRING in tabs and r.air is not None and r.air.still_airing))
 
@@ -234,18 +309,18 @@ class ShowRow:
     def also_text(self) -> str:
         """The seasons not listed here, e.g. 'Also: Season 2 is in Fully Dubbed; Seasons 3 and 4 are in ...'."""
         shown = {id(s) for s in self.seasons}
-        others: dict[Category, list[str]] = {}
+        others: dict[str, list[str]] = {}
         for s in self.all_seasons:
             if id(s) not in shown:
-                others.setdefault(s.category, []).append(season_name(s))
+                others.setdefault(group_title(s), []).append(season_name(s))
         if not others:
             return ""
         parts = []
-        for cat, names in others.items():
+        for group, names in others.items():
             if len(names) == 1:
-                parts.append(f"{names[0]} is in {cat.value}")
+                parts.append(f"{names[0]} is in {group}")
             else:
-                parts.append(f"{', '.join(names[:-1])} and {names[-1]} are in {cat.value}")
+                parts.append(f"{', '.join(names[:-1])} and {names[-1]} are in {group}")
         return "Also: " + "; ".join(parts)
 
 
@@ -259,14 +334,27 @@ class ResultsModel:
         self.results: dict[str, ShowResult] = {}
         self._shows: dict[str, list[ShowResult]] | None = None  # by_show(), until the next change
         self.dismissed: frozenset[str] = frozenset()
+        self.dub_grace_days = 0  # see mark_dub_timing; the main window sets it from the settings
 
     def clear(self) -> None:
         self.results.clear()
         self._shows = None
 
     def add(self, result: ShowResult) -> None:
+        mark_dub_timing(result, self.dub_grace_days)
         self.results[result.key] = result
         self._shows = None
+
+    def refresh_dub_timing(self, grace_days: int | None = None) -> bool:
+        """Work out again which dubs are still on their way (time passes, or the setting changed).
+        Returns whether any season moved between Needs English Audio and Dub Coming."""
+        if grace_days is not None:
+            self.dub_grace_days = grace_days
+        now = time.time()
+        changed = False
+        for r in self.results.values():
+            changed = mark_dub_timing(r, self.dub_grace_days, now) or changed
+        return changed
 
     def replace(self, result: ShowResult) -> bool:
         """Swap in a re-checked season, but only if it is still in the list."""
@@ -309,7 +397,7 @@ class ResultsModel:
         for show_id, seasons in self.by_show().items():
             if show_id in self.dismissed:
                 continue
-            for name in {s.category.name for s in seasons}:
+            for name in {group_tab(s) for s in seasons}:
                 counts[name] += 1
             for tab in CROSS_TABS:
                 if any(in_tabs(s, {tab}) for s in seasons):

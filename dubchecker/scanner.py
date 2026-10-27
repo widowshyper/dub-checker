@@ -101,6 +101,26 @@ def season_from_filename(name: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+_EPISODE_RE = re.compile(r"(?<![a-z0-9])s\d{1,2}[\s._-]?e(\d{1,4})(?![0-9])", re.I)
+
+
+def episode_number(filename: str) -> int | None:
+    """The episode number in a file name: 5 for "Show - S02E05.mkv" or "[Group] Show - 05 [1080p].mkv"."""
+    match = _EPISODE_RE.search(filename)
+    if match:
+        return int(match.group(1))
+    try:
+        import anitopy
+        number = (anitopy.parse(filename) or {}).get("episode_number")
+        if isinstance(number, list):
+            number = number[0] if number else None
+        if number is not None and str(number).isdigit():
+            return int(number)
+    except Exception as exc:  # anitopy can choke on odd names
+        log.debug("anitopy couldn't parse %r: %s", filename, exc)
+    return None
+
+
 # ---------------------------------------------------------------- titles
 
 _NOISE = (

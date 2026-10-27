@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 2.8.1
+**Version:** 2.9.0
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -27,6 +27,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 - Every season is sorted into one of four groups: Needs English Audio, No Dub Exists, Fully Dubbed, or Check Manually.
 - The group cards act as tabs. You can select several at once, drag them into any order, and show or hide them with tick boxes.
 - An English Only tab and column list seasons with episodes that only have English audio, to replace with dual-audio releases.
+- A Dub Coming tab holds seasons whose missing dubs are probably just late (simuldubs trail by a few weeks), using episode air dates from Sonarr or AniList, or the airing pattern when there are none.
 - An Airing tab and an Air status column show whether a show is airing, not out yet, on hiatus or finished, with the next episode date.
 - Shows open into seasons, and seasons open into individual episodes.
 - A coloured audio bar shows one block per episode, with a legend:
@@ -61,7 +62,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 - Clear saved online info.
 
 **Sonarr tags**
-- Tag shows `dual-audio`, `missing-dub`, `no-dub` or `english-only` in Sonarr, on demand or after every scan.
+- Tag shows `dual-audio`, `missing-dub`, `no-dub`, `english-only` or `dub-pending` in Sonarr, on demand or after every scan.
 
 ## How it works
 
@@ -101,7 +102,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Build and test**
 - PyInstaller (`build.bat`) produces the portable one-folder app and zip.
-- A unittest suite of 285 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
+- A unittest suite of 305 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
 
 ## Out of scope
 

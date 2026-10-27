@@ -25,8 +25,8 @@ from dubchecker.models import STATUS_BY_CODE, Category, FileResult, FileStatus, 
 from dubchecker.pipeline import ScanOutcome, ScanPipeline, evaluate_season
 from dubchecker.results_store import SavedScan, delete_scan, load_scan, save_scan
 from dubchecker.categorize import dub_tag
-from dubchecker.sonarr import (TAG_DUAL_AUDIO, TAG_ENGLISH_ONLY, TAG_MISSING_DUB, TAG_NO_DUB, SonarrClient, SonarrError,
-                               apply_dub_tags, search_for_replacements, series_page_url)
+from dubchecker.sonarr import (TAG_DUAL_AUDIO, TAG_DUB_PENDING, TAG_ENGLISH_ONLY, TAG_MISSING_DUB, TAG_NO_DUB,
+                               SonarrClient, SonarrError, apply_dub_tags, search_for_replacements, series_page_url)
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,7 @@ EPISODE_TEXT_COLORS: dict[FileStatus, str] = {
     FileStatus.UNLABELED: "amber",
     FileStatus.ERROR: "muted",
 }
+PENDING_COLOR = "purple"  # an episode whose dub is still on its way: in the audio bar, the key and its row
 
 
 class AudioBars:
@@ -79,11 +80,13 @@ class AudioBars:
     def _new(self, width: int, height: int) -> tk.PhotoImage:
         return tk.PhotoImage(master=self.app.root, width=width, height=height)
 
-    def _color(self, status: FileStatus) -> str:
-        return self.app.palette[ui.STATUS_COLORS[status]]
+    def _color(self, status: FileStatus | None) -> str:
+        """A status's colour; None is an episode whose dub is still on its way."""
+        return self.app.palette[PENDING_COLOR if status is None else ui.STATUS_COLORS[status]]
 
     def bar(self, code: str) -> tk.PhotoImage:
-        """``code`` has one letter per episode (``ShowResult.audio_code``); equal codes share one image."""
+        """``code`` has one letter per episode (``ui.display_code``: ``ShowResult.audio_code`` with "p" for
+        episodes waiting for their dub); equal codes share one image."""
         key = ("bar", code)
         if key not in self._images:
             width, height = self.app.px(BAR_WIDTH), self.app.px(BAR_HEIGHT)
@@ -93,11 +96,12 @@ class AudioBars:
             for number, letter in enumerate(code):
                 left = round(number * width / count)
                 right = max(left + 1, round((number + 1) * width / count) - gap)
-                image.put(self._color(STATUS_BY_CODE[letter]), to=(left, 0, right, height))
+                image.put(self._color(None if letter == "p" else STATUS_BY_CODE[letter]),
+                          to=(left, 0, right, height))
             self._images[key] = image
         return self._images[key]
 
-    def square(self, status: FileStatus) -> tk.PhotoImage:
+    def square(self, status: FileStatus | None) -> tk.PhotoImage:
         key = ("square", status)
         if key not in self._images:
             size = self.app.px(BAR_HEIGHT)
@@ -263,6 +267,8 @@ class App:
         self.dismissed: Dismissed = ctx.dismissed  # type: ignore[assignment]  # set by AppContext
         self.model = ui.ResultsModel()
         self.model.dismissed = self.dismissed.keys()
+        self.model.dub_grace_days = self.config.dub_grace_days
+        self._timing_hour = int(time.time() // 3600)  # dubs on their way are re-checked every hour
         self.tabs: set[str] = {Category.NEEDS_DUB.name}  # selected tabs (ui.TAB_IDS); none = every show
         self._drag: dict[str, Any] | None = None  # the tab being pressed or dragged
         # The scan running now: None = every show, else the show folders of one tab (``scan_scope``).
@@ -539,8 +545,8 @@ class App:
             side="left", padx=(self.px(6), 0))
         ttk.Button(tools, text="Export list...", command=self.export_csv).pack(side="left", padx=(self.px(6), 0))
         ttk.Label(legend, text="Audio key:", style="Caption.TLabel").pack(side="left", padx=(0, self.px(8)))
-        self.legend_labels: list[tuple[ttk.Label, FileStatus]] = []
-        for status, text in ui.LEGEND:
+        self.legend_labels: list[tuple[ttk.Label, FileStatus | None]] = []
+        for status, text in [*ui.LEGEND[:3], (None, "Dub on its way"), *ui.LEGEND[3:]]:
             label = ttk.Label(legend, text=text, compound="left", style="Caption.TLabel")
             label.pack(side="left", padx=(0, self.px(14)))
             self.legend_labels.append((label, status))
@@ -634,6 +640,7 @@ class App:
         self.tree.tag_configure("odd", background=pal["row_odd"])
         for status, color in EPISODE_TEXT_COLORS.items():  # episodes that need attention stand out
             self.tree.tag_configure(f"audio_{status.name}", foreground=pal[color])
+        self.tree.tag_configure("audio_PENDING", foreground=pal[PENDING_COLOR])
         self.empty_label.configure(background=pal["bg"], foreground=pal["muted"])  # the table's empty area shows the window colour
         self.bars.clear()
         for label, status in self.legend_labels:
@@ -665,6 +672,8 @@ class App:
         """Settings changed: the Sonarr summary, and whether the Airing tab, Air status column and
         Air status filter show."""
         self.update_sonarr_summary()
+        self.model.refresh_dub_timing(self.config.dub_grace_days)
+        self.update_cards()
         self._layout_cards()
         self._show_air_filter()
         self.select_tabs(self.tabs)
@@ -781,7 +790,9 @@ class App:
                 # Air status from Sonarr works after a local files scan too, when Sonarr is set up.
                 wants_sonarr = self.config.air_status_source == "sonarr" and self.sonarr_configured
                 air_client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key) if wants_sonarr else None
-                pipeline.run(root=path, air_client=air_client, only=only)
+                dates_client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key) \
+                    if self.sonarr_configured else None  # when episodes aired, for dubs on their way
+                pipeline.run(root=path, air_client=air_client, only=only, dates_client=dates_client)
         except Exception as exc:  # the pipeline reports its own errors; this is a last resort
             log.exception("Scan worker crashed")
             emit("done", ScanOutcome(error=f"The scan failed unexpectedly: {exc}"))
@@ -1138,6 +1149,12 @@ class App:
                 self.ctx.save_config()
                 self.start_scan(self.config.schedule_scope, scheduled=True)
             self.update_schedule_label()
+            hour = int(time.time() // 3600)
+            if hour != self._timing_hour and not self.scanning:
+                self._timing_hour = hour
+                if self.model.refresh_dub_timing():
+                    self.update_cards()
+                    self.refresh_table()
         finally:
             if not self.closing.is_set():
                 self._schedule_id = self.root.after(SCHEDULE_CHECK_MS, self._check_schedule)
@@ -1211,7 +1228,7 @@ class App:
 
     def _season_values(self, r: ShowResult, label: str) -> tuple:
         return (label, ui.anilist_text(r), ui.air_status_text(r), r.episodes, r.dual, r.original_only, r.english_only,
-                ui.confirmed_text(r), ui.match_text(r), ui.notes_text(r), r.category.value)
+                ui.confirmed_text(r), ui.match_text(r), ui.notes_text(r), ui.group_title(r))
 
     def _parent_values(self, row: ui.ShowRow, label: str) -> tuple:
         sources: list[str] = []
@@ -1220,19 +1237,19 @@ class App:
             for source in (s.dub.sources if s.dub else []):
                 if source not in sources:
                     sources.append(source)
-            if s.category.value not in groups:
-                groups.append(s.category.value)
+            if ui.group_title(s) not in groups:
+                groups.append(ui.group_title(s))
         speaker = ui.show_air_status(row.all_seasons)
         return (label, row.seasons_text(), ui.air_status_text(speaker) if speaker else "-", row.total("episodes"),
                 row.total("dual"), row.total("original_only"), row.total("english_only"), ", ".join(sources) or "-", "", row.also_text(),
                 ", ".join(groups))
 
     @staticmethod
-    def _episode_values(f: FileResult, label: str) -> tuple:
+    def _episode_values(f: FileResult, label: str, note: str) -> tuple:
         tick = "✓"
         return (label, "", "", "", tick if f.status is FileStatus.DUAL else "",
                 tick if f.status is FileStatus.ORIGINAL_ONLY else "", tick if f.status is FileStatus.ENGLISH_ONLY else "",
-                "", "", ui.episode_note(f), "")
+                "", "", note, "")
 
     def _sort_value(self, row: ui.ShowRow, column: str) -> Any:
         first = row.seasons[0]
@@ -1258,7 +1275,7 @@ class App:
             speaker = ui.show_air_status(row.all_seasons)
             return ui.air_sort_key(speaker) if speaker else (9, 0)
         if column == "group":
-            return first.category.value
+            return ui.group_title(first)
         return row.title.casefold()
 
     def sort_by(self, column: str) -> None:
@@ -1306,7 +1323,8 @@ class App:
             is_open = row.show_id in self.expanded
             self.titles[iid] = ("", row.title)
             self._insert_row("", iid, self._parent_values(row, self._label("", True, is_open, row.title)),
-                             (stripe, "parent"), self.bars.bar("".join(r.audio_code for r in row.seasons)), is_open)
+                             (stripe, "parent"), self.bars.bar("".join(ui.display_code(r) for r in row.seasons)),
+                             is_open)
             for r in row.seasons:
                 self._insert_season(iid, r, ui.INDENT, ui.season_name(r), stripe)
 
@@ -1365,7 +1383,7 @@ class App:
         is_open = r.key in self.expanded_seasons
         self.titles[iid] = (indent, text)
         self._insert_row(parent, iid, self._season_values(r, self._label(indent, True, is_open, text)),
-                         (stripe, "child") if parent else (stripe,), self.bars.bar(r.audio_code), is_open)
+                         (stripe, "child") if parent else (stripe,), self.bars.bar(ui.display_code(r)), is_open)
         if is_open:
             self._insert_episodes(iid, r)
 
@@ -1375,8 +1393,11 @@ class App:
         indent = self.titles.get(season_iid, ("", ""))[0] + ui.INDENT + "  "  # line up after the arrow
         stripe = next(t for t in self.tree.item(season_iid, "tags") if t in ("even", "odd"))
         for number, f in enumerate(r.files):
-            self._insert_row(season_iid, f"e|{r.key}|{number}", self._episode_values(f, indent + ui.episode_label(f)),
-                             (stripe, f"audio_{f.status.name}"), self.bars.square(f.status))
+            waiting = number in r.pending  # its dub is still on its way
+            note = ui.episode_note(f) + (f" - {ui.pending_note(r)}" if waiting else "")
+            self._insert_row(season_iid, f"e|{r.key}|{number}", self._episode_values(f, indent + ui.episode_label(f), note),
+                             (stripe, "audio_PENDING" if waiting else f"audio_{f.status.name}"),
+                             self.bars.square(None if waiting else f.status))
 
     def _insert_row(self, parent: str, iid: str, values: tuple, tags: tuple, image: tk.PhotoImage,
                     is_open: bool = False) -> None:
@@ -1713,7 +1734,8 @@ class App:
         wanted = self.dub_tags_wanted()
         if not automatic:
             counts = {tag: sum(1 for t in wanted.values() if t == tag)
-                      for tag in (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, TAG_ENGLISH_ONLY, None)}
+                      for tag in (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, TAG_ENGLISH_ONLY, TAG_DUB_PENDING,
+                                  None)}
             question = (
                 "Tag your shows in Sonarr?\n\n"
                 f"{TAG_DUAL_AUDIO}: {ui.plural(counts[TAG_DUAL_AUDIO], 'show')} (every episode has both languages)\n"
@@ -1722,6 +1744,8 @@ class App:
                 f"{TAG_NO_DUB}: {ui.plural(counts[TAG_NO_DUB], 'show')} (no English dub exists)\n"
                 f"{TAG_ENGLISH_ONLY}: {ui.plural(counts[TAG_ENGLISH_ONLY], 'show')} (some episodes have English "
                 "but not the original language)\n"
+                f"{TAG_DUB_PENDING}: {ui.plural(counts[TAG_DUB_PENDING], 'show')} (the dub of the newest episodes "
+                "is on its way)\n"
                 f"No tag: {ui.plural(counts[None], 'show')} (something to check manually)\n\n"
                 "A show whose tag changes loses its old one. Your other Sonarr tags aren't touched, and nor are "
                 "dismissed shows or shows Sonarr doesn't have.")
@@ -1843,7 +1867,7 @@ class App:
     def _on_replaced(self, result: ShowResult) -> bool:
         if not self.model.replace(result):
             return False
-        where = ui.GROUPS[result.category].title
+        where = ui.group_title(result)
         self.status_var.set(f"Updated {result.group.display_title} - it's now in {where}.")
         self.save_results()
         return True
@@ -1870,7 +1894,7 @@ class App:
                                  "Notes", "Folder"])
                 for row in rows:
                     for r in row.seasons:
-                        writer.writerow([r.category.value, r.group.show_title, r.group.season_label,
+                        writer.writerow([ui.group_title(r), r.group.show_title, r.group.season_label,
                                          ui.anilist_text(r), r.match.url if r.match else "", ui.air_status_text(r),
                                          r.episodes, r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
                                          ui.match_text(r),
