@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 2.10.0
+**Version:** 2.10.1
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -42,7 +42,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 - Results, open rows and selected tabs are kept after a restart. Clear results removes them.
 
 **Look**
-- A macOS-style design in light and dark: a floating glass sidebar, capsule buttons, a segmented Local files/Sonarr switch, a rounded search field, Apple's system colours, and a title bar that blends into the window on Windows 11.
+- A macOS-style design in light and dark: a floating glass sidebar, capsule buttons, a segmented Local files/Sonarr switch, a rounded search field, Apple's system colours, and a title bar that blends into the window on Windows 11. Settings is laid out like System Settings: its pages in a glass sidebar, and each page's settings in rounded groups with switches and controls on the right, filling the window and scrolling when needed.
 - Tk can't blur, so the glass is drawn: soft shadows, a bright top edge and smooth rounded corners.
 
 **Actions (right-click menu)**

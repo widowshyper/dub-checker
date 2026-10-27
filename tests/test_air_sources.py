@@ -1,4 +1,4 @@
-"""Air status from AniList, from Sonarr, or switched off (Settings > General > Air status)."""
+﻿"""Air status from AniList, from Sonarr, or switched off (Settings > General > Air status)."""
 import json
 import tempfile
 import threading
@@ -200,7 +200,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.app.cards["AIRING"].winfo_manager(), "")
         dialog = SettingsDialog(self.app, 0)
         dialog.air_source.set("sonarr")
-        self.assertIn("Sonarr tab first", dialog.air_hint.get())  # Sonarr isn't set up in this test
+        self.assertIn("Sonarr page first", dialog.air_hint.get())  # Sonarr isn't set up in this test
         dialog._save()
         self.assertIn("air", self.columns())
         self.assertEqual(self.app.cards["AIRING"].winfo_manager(), "grid")

@@ -50,7 +50,8 @@ PALETTES: dict[str, dict[str, str]] = {
 }
 
 CARD_STYLES = ("Card.TLabel", "Card.TButton", "Card.Accent.TButton", "Card.TEntry", "Card.TRadiobutton",
-               "Card.TCheckbutton", "Card.Horizontal.TProgressbar", "Card.TFrame")
+               "Card.TCheckbutton", "Card.Horizontal.TProgressbar", "Card.TFrame", "Card.TSpinbox",
+               "Card.TCombobox", "Card.Switch.TCheckbutton")
 
 
 def windows_prefers_dark() -> bool:
@@ -151,6 +152,10 @@ def apply_theme(root: tk.Tk, setting: str) -> dict[str, str]:
     style.configure("Caption.TLabel", font="SunValleyCaptionFont", foreground=palette["muted"])
     style.configure("Good.TLabel", foreground=palette["green"])
     style.configure("Bad.TLabel", foreground=palette["red"])
+    style.configure("Card.Good.TLabel", background=palette["card"], foreground=palette["green"])
+    style.configure("Card.Bad.TLabel", background=palette["card"], foreground=palette["red"])
+    style.configure("Hairline.TFrame", background=palette["border"])  # a 1 px line between rows on a card
+    style.configure("Row.TFrame", background=palette["card"])  # plain, unlike sv-ttk's bordered Card.TFrame
     style.configure("LargeTitle.TLabel", font="DubLargeTitleFont")
     style.configure("Section.TLabel", background=palette["card"], foreground=palette["muted"], font="DubSectionFont")
     style.configure("Card.Caption.TLabel", background=palette["card"], foreground=palette["muted"],

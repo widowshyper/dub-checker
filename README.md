@@ -29,7 +29,7 @@ Each season lands in one of four groups:
 
 | Settings: hard drive care |
 |---|
-| ![The Settings window on the Hard drive care tab](docs/screenshots/settings.png) |
+| ![The Settings window on the Hard drive care page: its pages in a sidebar, and grouped settings with a switch or number on the right](docs/screenshots/settings.png) |
 
 ## Quick start
 
@@ -131,7 +131,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
 - **Dismissing a show:** right-click it and choose **Dismiss this show**. It's hidden from every tab, the counts and exports, and stays hidden after a rescan. **Dismissed shows** above the list shows what you've dismissed and brings shows back.
 - **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group and air status.
 - **Your results are kept.** When you close Dub Checker and open it again, the last scan is back, with the same tab and open shows, and the status line says when it was made. A scan that was stopped, or still running when you closed the window, keeps the part that was finished.
-- **Clear results** empties the table, resets the window and forgets the saved list, so it doesn't come back next time. Your settings, manual matches, and what Dub Checker knows about your files and AniList are kept, so the next scan is quick. To forget saved AniList answers, use **Settings > General > Clear saved online info**.
+- **Clear results** empties the table, resets the window and forgets the saved list, so it doesn't come back next time. Your settings, manual matches, and what Dub Checker knows about your files and AniList are kept, so the next scan is quick. To forget saved AniList answers, click **Clear** next to Saved online info in **Settings > General**.
 
 ## Dubs on their way
 

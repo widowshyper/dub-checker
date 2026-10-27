@@ -12,7 +12,7 @@ from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from dubchecker import APP_NAME, dpapi, theme
+from dubchecker import APP_NAME, __version__, dpapi, glass, theme
 from dubchecker import ui_common as ui
 from dubchecker.anilist import parse_anilist_id
 from dubchecker.models import FileStatus, ShowResult
@@ -62,6 +62,8 @@ class Dialog(tk.Toplevel):
         except tk.TclError:
             pass
         self.destroy()
+        # Glass widgets register with the main window to be repainted with the theme; forget ours.
+        self.app.surfaces[:] = [s for s in self.app.surfaces if s.winfo_exists()]
 
     def link(self, parent: tk.Misc, text: str, url: str) -> tk.Label:
         font = tkfont.Font(font="SunValleyBodyFont")
@@ -352,16 +354,87 @@ class FixMatchDialog(Dialog):
 
 # ---------------------------------------------------------------- settings
 
+_ICON_FAMILIES = ("Segoe Fluent Icons", "Segoe MDL2 Assets")  # Windows' symbol fonts (11, then 10)
+
+
+def _icon_family(widget: tk.Misc) -> str:
+    families = set(tkfont.families(widget))
+    return next((f for f in _ICON_FAMILIES if f in families), "")
+
+
+class PaneIcon:
+    """A settings page's symbol: a white glyph on a rounded square of colour, as in System Settings."""
+
+    def __init__(self, dialog: SettingsDialog, canvas: tk.Canvas, size: int) -> None:
+        self.dialog, self.canvas, self.size = dialog, canvas, size
+        self._image: tk.PhotoImage | None = None
+        self._shape = canvas.create_image(0, 0, anchor="w")
+        self._glyph = canvas.create_text(0, 0, fill="#ffffff", font=dialog.glyph_font(size))
+
+    def draw(self, index: int, x: int, y: int, backdrop: str) -> None:
+        pal, size = self.dialog.app.palette, self.size
+        _title, color, glyph = SettingsDialog.PANES[index]
+        look = glass.Look(round(size * 0.24), pal[color], backdrop)
+        self._image = glass.stretched(self.canvas, look, size, size)
+        self.canvas.itemconfigure(self._shape, image=self._image)
+        self.canvas.coords(self._shape, x, y)
+        self.canvas.coords(self._glyph, x + size / 2, y)
+        self.canvas.itemconfigure(self._glyph, text=glyph if self.dialog.icon_family else _title[0])
+
+
+class PaneRow(tk.Canvas):
+    """A page in the Settings sidebar: its icon and name, on a blue highlight when it's open."""
+
+    def __init__(self, dialog: SettingsDialog, parent: tk.Misc, index: int) -> None:
+        app = dialog.app
+        super().__init__(parent, height=app.px(34), width=1, highlightthickness=0, borderwidth=0, cursor="hand2")
+        self.dialog, self.index, self.hover = dialog, index, False
+        self._pill_image: tk.PhotoImage | None = None
+        self._pill = self.create_image(0, 0, anchor="nw")
+        self.icon = PaneIcon(dialog, self, app.px(22))
+        self._title = self.create_text(0, 0, text=SettingsDialog.PANES[index][0], anchor="w",
+                                       font="SunValleyBodyFont")
+        self.bind("<Enter>", lambda _e: self._set_hover(True))
+        self.bind("<Leave>", lambda _e: self._set_hover(False))
+        self.bind("<Button-1>", lambda _e: dialog.select_pane(index))
+        self.bind("<Configure>", lambda _e: self.recolor())
+
+    def _set_hover(self, hover: bool) -> None:
+        self.hover = hover
+        self.recolor()
+
+    def recolor(self) -> None:
+        pal, px = self.dialog.app.palette, self.dialog.app.px
+        width = max(self.winfo_width(), px(120))
+        height = int(self.cget("height"))
+        chosen = self.dialog.pane == self.index
+        row = pal["accent"] if chosen else pal["card_hover"] if self.hover else ""
+        self.configure(background=pal["card"])
+        if row:
+            self._pill_image = glass.stretched(self, glass.Look(px(7), row, pal["card"]), width, height)
+            self.itemconfigure(self._pill, image=self._pill_image, state="normal")
+        else:
+            self.itemconfigure(self._pill, image="", state="hidden")  # the old image is about to go
+            self._pill_image = None
+        self.icon.draw(self.index, px(7), height // 2, row or pal["card"])
+        self.coords(self._title, px(38), height / 2)
+        self.itemconfigure(self._title, fill="#ffffff" if chosen else pal["fg"])
+
+
 class SettingsDialog(Dialog):
+    """Laid out like macOS System Settings: the pages in a glass sidebar, and each page's settings in
+    rounded groups, a name on the left, its control on the right and what it does underneath."""
     THEMES = (("system", "Match Windows" if sys.platform == "win32" else "Match system"),
               ("light", "Light"), ("dark", "Dark"))
+    # Name, colour (a palette key) and glyph (Segoe Fluent Icons) of each page.
+    PANES = (("General", "grey", ""), ("Hard drive care", "amber", ""),
+             ("Sonarr", "blue", ""), ("Schedule", "red", ""))
 
     def __init__(self, app: App, tab: int = 0) -> None:
         super().__init__(app, f"Settings - {APP_NAME}")
         cfg = app.config
         self.cfg = cfg
         self.results: queue.Queue[str] = queue.Queue()
-        self.wrap = self.px(500)
         self.theme_var = tk.StringVar(value=dict(self.THEMES)[cfg.theme])
         self.threshold = tk.StringVar(value=str(cfg.confidence_threshold))
         self.expiry = tk.StringVar(value=str(cfg.cache_expiry_days))
@@ -386,202 +459,318 @@ class SettingsDialog(Dialog):
             self.schedule_scopes.append(cfg.schedule_scope)  # e.g. Airing while air status is off
         self.schedule_scope = tk.StringVar(value=self._scope_label(cfg.schedule_scope))
         self.schedule_hours = tk.StringVar(value=str(cfg.schedule_every_hours))
+        self.icon_family = _icon_family(self)
+        self._fonts: dict[int, tkfont.Font] = {}
+        self.pane = -1
+        first_surface = len(app.surfaces)
 
-        outer = ttk.Frame(self, padding=self.px(16))
-        outer.pack(fill="both", expand=True)
-        outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(0, weight=1)
-        self.notebook = ttk.Notebook(outer)
-        self.notebook.grid(row=0, column=0, sticky="nsew")
-        self.notebook.add(self._general_tab(), text="General")
-        self.notebook.add(self._drive_tab(), text="Hard drive care")
-        self.notebook.add(self._sonarr_tab(), text="Sonarr")
-        self.notebook.add(self._schedule_tab(), text="Schedule")
-        self.notebook.select(tab)
-
-        buttons = ttk.Frame(outer)
-        buttons.grid(row=1, column=0, sticky="e", pady=(self.px(12), 0))
-        ttk.Button(buttons, text="Save", style="Accent.TButton", command=self._save).pack(side="left")
-        ttk.Button(buttons, text="Cancel", command=self.close).pack(side="left", padx=(self.px(8), 0))
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+        gap = self.px(8)
+        self._build_sidebar().grid(row=0, column=0, rowspan=2, sticky="ns", padx=(gap, 0), pady=gap)
+        self._build_pages().grid(row=0, column=1, sticky="nsew", padx=(self.px(12), 0), pady=(self.px(14), 0))
+        buttons = ttk.Frame(self)
+        buttons.grid(row=1, column=1, sticky="e", padx=self.px(18), pady=(self.px(6), self.px(12)))
+        glass.PillButton(buttons, app, "Cancel", self.close, width=self.px(84)).pack(side="left")
+        glass.PillButton(buttons, app, "Save", self._save, accent=True, width=self.px(84)).pack(side="left")
+        for surface in app.surfaces[first_surface:]:
+            surface.recolor()
+        self.select_pane(tab)
         self._update_switches()
-        self.present(660, 620)
+        self.present(940, 680)
+
+    # ------------------------------------------------------------ the window
+
+    def glyph_font(self, size: int) -> tkfont.Font:
+        """The icons' symbol font, at about half the icon's size (kept: Tk forgets fonts nobody holds)."""
+        if size not in self._fonts:
+            family = self.icon_family or tkfont.nametofont("SunValleyBodyStrongFont").cget("family")
+            self._fonts[size] = tkfont.Font(self, family=family, size=-round(size * (0.55 if self.icon_family
+                                                                                      else 0.6)))
+        return self._fonts[size]
+
+    def _build_sidebar(self) -> glass.GlassPanel:
+        panel = glass.GlassPanel(self, self.app, "sidebar", padding=8)
+        panel.configure(width=self.px(230))
+        panel.pack_propagate(False)
+        self.pane_rows = []
+        for index in range(len(self.PANES)):
+            row = PaneRow(self, panel.body, index)
+            row.pack(fill="x", pady=(0, self.px(2)))
+            self.pane_rows.append(row)
+        ttk.Label(panel.body, text=f"{APP_NAME} {__version__}", style="Card.Caption.TLabel").pack(
+            side="bottom", anchor="w", padx=self.px(8), pady=(0, self.px(2)))
+        return panel
+
+    def _build_pages(self) -> ttk.Frame:
+        """The open page's title over its settings, which scroll if the window is too short for them."""
+        frame = ttk.Frame(self)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        size = self.px(30)
+        self.header = tk.Canvas(frame, height=size + self.px(6), highlightthickness=0, borderwidth=0)
+        self.header.grid(row=0, column=0, sticky="ew", padx=(self.px(8), 0), pady=(0, self.px(8)))
+        self.header_icon = PaneIcon(self, self.header, size)
+        self.header_title = self.header.create_text(size + self.px(12), (size + self.px(6)) // 2, anchor="w",
+                                                    font="DubLargeTitleFont")
+        self.scroller = tk.Canvas(frame, highlightthickness=0, borderwidth=0, yscrollincrement=self.px(20))
+        self.scroller.grid(row=1, column=0, sticky="nsew")
+        # Laid over the page's right edge like a macOS scroll bar, so showing it doesn't narrow the page
+        # (which would re-wrap the text, which could change whether it's needed, and so on).
+        self.scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.scroller.yview)
+        self.scroller.configure(yscrollcommand=self.scrollbar.set)
+        self.holder = ttk.Frame(self.scroller, padding=(self.px(4), self.px(4), self.px(14), self.px(12)))
+        # Always a set width: the text wraps to fit it, so a width that followed the text could see-saw.
+        holder_item = self.scroller.create_window(0, 0, window=self.holder, anchor="nw", width=self.px(680))
+        self.scroller.bind("<Configure>", lambda e: (
+            self.scroller.itemconfigure(holder_item, width=max(e.width, self.px(360))), self._update_scrolling()))
+        self.holder.bind("<Configure>", lambda _e: self._update_scrolling())
+        self.bind("<MouseWheel>", self._on_wheel)
+        self.pages = [self._general_page(), self._drive_page(), self._sonarr_page(), self._schedule_page()]
+        return frame
+
+    def select_pane(self, index: int) -> None:
+        if index == self.pane:
+            return
+        if self.pane >= 0:
+            self.pages[self.pane].pack_forget()
+        self.pane = index
+        self.pages[index].pack(fill="x")
+        for row in self.pane_rows:
+            row.recolor()
+        pal = self.app.palette
+        self.header.configure(background=pal["bg"])
+        self.header_icon.draw(index, 0, int(self.header.cget("height")) // 2, pal["bg"])
+        self.header.itemconfigure(self.header_title, text=self.PANES[index][0], fill=pal["fg"])
+        self.scroller.configure(background=pal["bg"])
+        self.scroller.yview_moveto(0)
+
+    def _update_scrolling(self) -> None:
+        """Show the scroll bar only when the page doesn't fit."""
+        self.scroller.configure(scrollregion=(0, 0, 0, self.holder.winfo_reqheight()))
+        if self.holder.winfo_reqheight() > self.scroller.winfo_height() > 1:
+            self.scrollbar.place(in_=self.scroller, relx=1, rely=0, relheight=1, anchor="ne")
+        else:
+            self.scrollbar.place_forget()
+            self.scroller.yview_moveto(0)
+
+    def _on_wheel(self, event: Any) -> str:
+        if self.scrollbar.winfo_ismapped():
+            self.scroller.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"  # also stops spin boxes and drop-downs changing their value while the page scrolls
 
     # ------------------------------------------------------------ layout helpers
 
     def _page(self) -> ttk.Frame:
-        page = ttk.Frame(self.notebook, padding=self.px(16))
-        page.columnconfigure(1, weight=1)
-        page._row = 0  # type: ignore[attr-defined]
-        return page
+        return ttk.Frame(self.holder)
 
-    def _next_row(self, page: ttk.Frame) -> int:
-        row = page._row  # type: ignore[attr-defined]
-        page._row += 1  # type: ignore[attr-defined]
-        return row
+    def _group(self, page: ttk.Frame, heading: str = "") -> tk.Frame:
+        """A rounded group of settings. Returns the frame to add rows to."""
+        if heading:
+            ttk.Label(page, text=heading, style="Strong.TLabel").pack(
+                anchor="w", padx=self.px(10), pady=(self.px(14) if page.winfo_children() else 0, self.px(4)))
+        panel = glass.GlassPanel(page, self.app, "card", padding=0)
+        panel.pack(fill="x")
+        panel.body.columnconfigure(0, weight=1)
+        return panel.body
 
-    def _setting(self, page: ttk.Frame, label: str, widget: tk.Misc, hint: str = "") -> None:
-        row = self._next_row(page)
-        ttk.Label(page, text=label).grid(row=row, column=0, sticky="w", padx=(0, self.px(12)), pady=(self.px(8), 0))
-        widget.grid(row=row, column=1, sticky="w", pady=(self.px(8), 0))
+    def _item(self, group: tk.Frame) -> ttk.Frame:
+        """A row of a group, under a hairline if it isn't the first."""
+        rows = group.grid_size()[1]
+        if rows:
+            ttk.Frame(group, style="Hairline.TFrame", height=1).grid(row=rows, column=0, sticky="ew",
+                                                                     padx=self.px(12))
+        item = ttk.Frame(group, style="Row.TFrame", padding=(self.px(12), self.px(9)))
+        item.grid(row=rows + 1, column=0, sticky="ew")
+        item.columnconfigure(0, weight=1)
+        return item
+
+    def _setting(self, group: tk.Frame, label: str, make: Any, hint: str = "") -> Any:
+        """A row with ``label`` on the left and the control ``make(row)`` builds on the right."""
+        item = self._item(group)
+        ttk.Label(item, text=label, style="Card.TLabel").grid(row=0, column=0, sticky="w")
+        widget = make(item)
+        widget.grid(row=0, column=1, sticky="e", padx=(self.px(12), 0))
         if hint:
-            self._hint(page, hint)
+            self._hint(item, hint)
+        return widget
 
-    def _hint(self, page: ttk.Frame, text: str, variable: tk.StringVar | None = None) -> ttk.Label:
-        label = ttk.Label(page, text=text, textvariable=variable, style="Caption.TLabel", wraplength=self.wrap)
-        label.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(2), 0))
+    def _switch(self, group: tk.Frame, label: str, variable: tk.BooleanVar, hint: str = "") -> ttk.Checkbutton:
+        return self._setting(group, label, lambda row: ttk.Checkbutton(
+            row, variable=variable, style="Card.Switch.TCheckbutton", command=self._update_switches), hint)
+
+    def _hint(self, item: ttk.Frame, text: str, variable: tk.StringVar | None = None,
+              style: str = "Card.Caption.TLabel") -> ttk.Label:
+        """Grey text under a row's setting, as wide as the row."""
+        label = ttk.Label(item, text=text, textvariable=variable, style=style)
+        label.grid(row=item.grid_size()[1], column=0, columnspan=2, sticky="w", pady=(self.px(3), 0))
+        self._wrap(label, item, 2 * self.px(12))
         return label
 
-    def _heading(self, page: ttk.Frame, text: str) -> None:
-        ttk.Label(page, text=text, style="Strong.TLabel").grid(row=self._next_row(page), column=0, columnspan=2,
-                                                               sticky="w", pady=(self.px(16), 0))
+    def _footnote(self, page: ttk.Frame, text: str) -> ttk.Label:
+        """Grey text under a group."""
+        label = ttk.Label(page, text=text, style="Caption.TLabel")
+        label.pack(anchor="w", padx=self.px(10), pady=(self.px(6), 0))
+        self._wrap(label, page, 2 * self.px(10))
+        return label
+
+    def _wrap(self, label: ttk.Label, container: tk.Misc, inset: int) -> None:
+        container.bind("<Configure>", lambda e: label.configure(wraplength=max(self.px(200), e.width - inset)),
+                       add="+")
 
     def _spinbox(self, parent: tk.Misc, variable: tk.StringVar, low: int, high: int, width: int = 6) -> ttk.Spinbox:
-        return ttk.Spinbox(parent, from_=low, to=high, textvariable=variable, width=width)
+        box = ttk.Spinbox(parent, from_=low, to=high, textvariable=variable, width=width, style="Card.TSpinbox")
+        box.bind("<MouseWheel>", self._on_wheel)
+        return box
 
-    # ------------------------------------------------------------ tabs
+    def _spin_unit(self, parent: tk.Misc, variable: tk.StringVar, low: int, high: int, unit: str,
+                   width: int = 6) -> ttk.Frame:
+        """A spin box with its unit after it ("30 days"). The spin box is ``.spin``."""
+        frame = ttk.Frame(parent, style="Row.TFrame")
+        frame.spin = self._spinbox(frame, variable, low, high, width)  # type: ignore[attr-defined]
+        frame.spin.pack(side="left")  # type: ignore[attr-defined]
+        ttk.Label(frame, text=unit, style="Card.TLabel").pack(side="left", padx=(self.px(6), 0))
+        return frame
 
-    def _general_tab(self) -> ttk.Frame:
+    def _combobox(self, parent: tk.Misc, variable: tk.StringVar, values: list[str], width: int) -> ttk.Combobox:
+        box = ttk.Combobox(parent, textvariable=variable, values=values, state="readonly", width=width,
+                           style="Card.TCombobox")
+        box.bind("<MouseWheel>", self._on_wheel)
+        return box
+
+    def _segmented(self, parent: tk.Misc, variable: tk.StringVar, options: list[tuple[str, str]],
+                   width: int) -> glass.SegmentedControl:
+        control = glass.SegmentedControl(parent, self.app, variable, options)
+        control.configure(width=self.px(width))
+        return control
+
+    def _entry(self, parent: tk.Misc, variable: tk.StringVar, **options: Any) -> ttk.Entry:
+        return ttk.Entry(parent, textvariable=variable, width=36, style="Card.TEntry", **options)
+
+    # ------------------------------------------------------------ pages
+
+    def _general_page(self) -> ttk.Frame:
         page = self._page()
-        combo = ttk.Combobox(page, textvariable=self.theme_var, values=[name for _, name in self.THEMES],
-                             state="readonly", width=18)
-        self._setting(page, "Appearance", combo)
-        self._setting(page, "Minimum match score", self._spinbox(page, self.threshold, 50, 100),
+        group = self._group(page)
+        self._setting(group, "Appearance", lambda row: self._segmented(
+            row, self.theme_var, [(name, name) for _, name in self.THEMES], 330))
+        self._setting(group, "Minimum match score", lambda row: self._spinbox(row, self.threshold, 50, 100),
                       "AniList matches that score lower than this go to Check Manually. The default is 80.")
-        row = ttk.Frame(page)
-        self._spinbox(row, self.expiry, 1, 365).pack(side="left")
-        ttk.Label(row, text="days").pack(side="left", padx=(self.px(6), 0))
-        self._setting(page, "Check AniList again after", row,
+        self._setting(group, "Check AniList again after",
+                      lambda row: self._spin_unit(row, self.expiry, 1, 365, "days"),
                       "Answers from AniList are saved and reused until then, which keeps rescans fast.")
 
-        self._heading(page, "Dubs on their way")
-        row = ttk.Frame(page)
-        self._spinbox(row, self.dub_grace, 0, 365).pack(side="left")
-        ttk.Label(row, text="days").pack(side="left", padx=(self.px(6), 0))
-        self._setting(page, "Dubs can follow up to", row,
+        group = self._group(page, "Dubs on their way")
+        self._setting(group, "Dubs can follow up to", lambda row: self._spin_unit(row, self.dub_grace, 0, 365, "days"),
                       "English dubs of airing shows often come out a few weeks after each episode. A Japanese-only "
                       "episode newer than this goes to Dub Coming instead of Needs English Audio, and moves back by "
                       "itself if its dub doesn't turn up in time. Air dates come from Sonarr, or AniList for shows "
                       "Sonarr doesn't have. Without dates, a show counts while it's still airing and only its newest "
                       "episodes lack English. 0 turns this off.")
 
-        self._heading(page, "Air status")
-        choices = ttk.Frame(page)
-        choices.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
-        for value, text in (("anilist", "From AniList"), ("sonarr", "From Sonarr"), ("off", "Off")):
-            ttk.Radiobutton(choices, text=text, value=value, variable=self.air_source).pack(
-                side="left", padx=(0, self.px(18)))
+        group = self._group(page, "Air status")
         self.air_hint = tk.StringVar()
-        self._hint(page, "", self.air_hint)
+        air = self._setting(group, "Look up air status", lambda row: self._segmented(
+            row, self.air_source, [("anilist", "From AniList"), ("sonarr", "From Sonarr"), ("off", "Off")], 330))
+        self._hint(air.master, "", self.air_hint)
         for variable in (self.air_source, self.sonarr_url, self.sonarr_key):
             variable.trace_add("write", lambda *_: self._update_air_hint())
         self._update_air_hint()
 
-        self._heading(page, "Saved information")
-        clear_row = ttk.Frame(page)
-        clear_row.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
-        ttk.Button(clear_row, text="Clear saved online info", command=self._clear_online).pack(side="left")
-        ttk.Button(clear_row, text="Open data folder", command=lambda: ui.open_path(self.app.ctx.data_dir)).pack(
-            side="left", padx=(self.px(8), 0))
+        group = self._group(page, "Saved information")
+        clear = self._setting(group, "Saved online info", lambda row: glass.PillButton(
+            row, self.app, "Clear", self._clear_online, backdrop="card"))
         self.clear_feedback = self._hint(
-            page, "Clearing forgets the saved AniList answers and the dub list, so the next scan asks online again. "
-                  "What Dub Checker knows about your files, your settings and your manual matches are kept.")
-        self._hint(page, f"Data folder: {self.app.ctx.data_dir}")
+            clear.master, "Clearing forgets the saved AniList answers and the dub list, so the next scan asks online "
+                          "again. What Dub Checker knows about your files, your settings and your manual matches are "
+                          "kept.")
+        self._setting(group, "Data folder", lambda row: glass.PillButton(
+            row, self.app, "Open", lambda: ui.open_path(self.app.ctx.data_dir), backdrop="card"),
+            str(self.app.ctx.data_dir))
         return page
 
-    def _drive_tab(self) -> ttk.Frame:
+    def _drive_page(self) -> ttk.Frame:
         page = self._page()
-        self._setting(page, "Files read at the same time", self._spinbox(page, self.workers, 1, 16),
+        group = self._group(page)
+        self._setting(group, "Files read at the same time", lambda row: self._spinbox(row, self.workers, 1, 16),
                       "Use 1 for a single spinning hard drive - it's usually fastest and gentlest. SSDs are happy "
                       "with 4 or more.")
 
-        self._heading(page, "Network shares")
-        self.net_switch = ttk.Checkbutton(page, text="Use a different number for network shares (NAS)",
-                                          variable=self.net_enabled, style="Switch.TCheckbutton",
-                                          command=self._update_switches)
-        self.net_switch.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
-        self.net_spin = self._spinbox(page, self.net_workers, 1, 32)
-        self._setting(page, "Files read at the same time", self.net_spin,
-                      "Reading several files at once hides network delays, so shares often scan faster with 6-8.")
+        group = self._group(page, "Network shares")
+        self.net_switch = self._switch(group, "Use a different number for network shares (NAS)", self.net_enabled)
+        self.net_spin = self._setting(group, "Files read at the same time",
+                                      lambda row: self._spinbox(row, self.net_workers, 1, 32),
+                                      "Reading several files at once hides network delays, so shares often scan "
+                                      "faster with 6-8.")
 
-        self._heading(page, "Breaks")
-        ttk.Checkbutton(page, text="Take breaks while reading", variable=self.pause_enabled,
-                        style="Switch.TCheckbutton", command=self._update_switches).grid(
-            row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
-        row = ttk.Frame(page)
-        row.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
-        ttk.Label(row, text="Read").pack(side="left")
-        self.pause_files_spin = self._spinbox(row, self.pause_files, 1, 10000, width=7)
-        self.pause_files_spin.pack(side="left", padx=self.px(6))
-        ttk.Label(row, text="files, then pause").pack(side="left")
-        self.pause_seconds_spin = self._spinbox(row, self.pause_seconds, 1, 3600, width=6)
-        self.pause_seconds_spin.pack(side="left", padx=self.px(6))
-        ttk.Label(row, text="seconds").pack(side="left")
+        group = self._group(page, "Breaks")
+        self._switch(group, "Take breaks while reading", self.pause_enabled)
+        self.pause_files_spin = self._setting(
+            group, "Pause after reading", lambda row: self._spin_unit(row, self.pause_files, 1, 10000, "files", 7)).spin
+        pause_for = self._setting(group, "Pause for",
+                                  lambda row: self._spin_unit(row, self.pause_seconds, 1, 3600, "seconds"))
+        self.pause_seconds_spin = pause_for.spin
         self.pause_hint = tk.StringVar()
-        self._hint(page, "", self.pause_hint)
+        self._hint(pause_for.master, "", self.pause_hint)
         for variable in (self.pause_files, self.pause_seconds, self.pause_enabled):
             variable.trace_add("write", lambda *_: self._update_pause_hint())
         self._update_pause_hint()
         return page
 
-    def _sonarr_tab(self) -> ttk.Frame:
+    def _sonarr_page(self) -> ttk.Frame:
         page = self._page()
-        self._setting(page, "Address", ttk.Entry(page, textvariable=self.sonarr_url, width=40),
+        group = self._group(page, "Connection")
+        self._setting(group, "Address", lambda row: self._entry(row, self.sonarr_url),
                       "For example http://localhost:8989 (add the URL base if you set one, e.g. /sonarr).")
-        self._setting(page, "API key", ttk.Entry(page, textvariable=self.sonarr_key, width=40, show="•"),
-                      "In Sonarr: Settings > General > API Key. " + (
-                          "Dub Checker saves it encrypted, so only your Windows account on this PC can read it."
-                          if dpapi.available() else
-                          "It's saved in UserData/config.json, which only your user account can read."))
+        key = self._setting(group, "API key", lambda row: self._entry(row, self.sonarr_key, show="•"),
+                            "In Sonarr: Settings > General > API Key. " + (
+                                "Dub Checker saves it encrypted, so only your Windows account on this PC can read "
+                                "it." if dpapi.available() else
+                                "It's saved in UserData/config.json, which only your user account can read."))
         if self.cfg.api_key_unreadable:
-            self._hint(page, "Your API key was saved on another PC or Windows account, so it can't be read "
-                             "here. Please enter it again.")
-        for text, variable in (("Only series set to the Anime series type", self.anime_only),
-                               ("Read files myself when Sonarr doesn't know a track's language", self.read_unknown),
-                               ("Tag shows in Sonarr after every scan", self.tag_after_scan)):
-            ttk.Checkbutton(page, text=text, variable=variable).grid(
-                row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
-        self._hint(page, "Tags each show dual-audio (every episode has both languages), missing-dub (an English "
-                         "dub exists but some episodes don't have it), no-dub (no English dub exists) or "
-                         "english-only (some episodes have English but not the original language). You can also do "
-                         "it any time with Tag in Sonarr... in the sidebar.")
+            self._hint(key.master, "Your API key was saved on another PC or Windows account, so it can't be read "
+                                   "here. Please enter it again.", style="Card.Bad.TLabel")
+        self.test_button = self._setting(group, "Test the connection", lambda row: glass.PillButton(
+            row, self.app, "Test", self._test_connection, backdrop="card"))
+        self.test_result = self._hint(self.test_button.master, "", style="Card.TLabel")
+        self.test_result.grid_remove()  # shown once there's a result
 
-        self._heading(page, "Path mapping")
-        self._hint(page, "Only needed if Sonarr runs on another computer or in Docker and sees your files at a "
-                         "different path. Fill in both or neither.")
-        self._setting(page, "Sonarr sees files at", ttk.Entry(page, textvariable=self.path_from, width=40))
-        self._setting(page, "This PC sees them at", ttk.Entry(page, textvariable=self.path_to, width=40),
+        group = self._group(page, "Options")
+        self._switch(group, "Only series set to the Anime series type", self.anime_only)
+        self._switch(group, "Read files myself when Sonarr doesn't know a track's language", self.read_unknown)
+        self._switch(group, "Tag shows in Sonarr after every scan", self.tag_after_scan,
+                     "Tags each show dual-audio (every episode has both languages), missing-dub (an English dub "
+                     "exists but some episodes don't have it), no-dub (no English dub exists) or english-only (some "
+                     "episodes have English but not the original language). You can also do it any time with Tag in "
+                     "Sonarr... in the sidebar.")
+
+        group = self._group(page, "Path mapping")
+        self._setting(group, "Sonarr sees files at", lambda row: self._entry(row, self.path_from))
+        self._setting(group, "This PC sees them at", lambda row: self._entry(row, self.path_to),
                       "Example: /tv  →  \\\\nas\\media\\tv")
-
-        test_row = ttk.Frame(page)
-        test_row.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(16), 0))
-        self.test_button = ttk.Button(test_row, text="Test connection", command=self._test_connection)
-        self.test_button.pack(side="left")
-        self.test_result = ttk.Label(page, text="", wraplength=self.wrap)
-        self.test_result.grid(row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(6), 0))
+        self._footnote(page, "Only needed if Sonarr runs on another computer or in Docker and sees your files at a "
+                             "different path. Fill in both or neither.")
         return page
 
     def _scope_label(self, scope: str) -> str:
         return "Every show" if scope == "all" else f"Only {ui.TABS[scope].title}"
 
-    def _schedule_tab(self) -> ttk.Frame:
+    def _schedule_page(self) -> ttk.Frame:
         page = self._page()
-        ttk.Checkbutton(page, text="Scan automatically while Dub Checker is open", variable=self.schedule_on,
-                        style="Switch.TCheckbutton", command=self._update_switches).grid(
-            row=self._next_row(page), column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
-        self.schedule_scope_box = ttk.Combobox(page, textvariable=self.schedule_scope, state="readonly", width=30,
-                                               values=[self._scope_label(s) for s in self.schedule_scopes])
-        self._setting(page, "What to scan", self.schedule_scope_box,
-                      "Scanning only one tab is much quicker: just those shows are read and looked up, and the "
-                      "rest of your results stay as they are. It needs one full scan first, so Dub Checker knows "
-                      "which shows are in the tab.")
-        row = ttk.Frame(page)
-        self.schedule_hours_spin = self._spinbox(row, self.schedule_hours, 1, 24 * 30)
-        self.schedule_hours_spin.pack(side="left")
-        ttk.Label(row, text="hours").pack(side="left", padx=(self.px(6), 0))
-        self._setting(page, "Every", row, "24 is once a day; 168 is once a week.")
-        self._hint(page, "Dub Checker has to be open for this (minimised is fine). If a scan came due while it "
-                         "was closed, it runs about a minute after you open it. The scan uses the source and "
-                         "folder chosen in the main window, and never interrupts a scan you started yourself.")
+        group = self._group(page)
+        self._switch(group, "Scan automatically while Dub Checker is open", self.schedule_on)
+        self.schedule_scope_box = self._setting(
+            group, "What to scan", lambda row: self._combobox(
+                row, self.schedule_scope, [self._scope_label(s) for s in self.schedule_scopes], 26),
+            "Scanning only one tab is much quicker: just those shows are read and looked up, and the rest of your "
+            "results stay as they are. It needs one full scan first, so Dub Checker knows which shows are in the "
+            "tab.")
+        self.schedule_hours_spin = self._setting(
+            group, "Every", lambda row: self._spin_unit(row, self.schedule_hours, 1, 24 * 30, "hours"),
+            "24 is once a day; 168 is once a week.").spin
+        self._footnote(page, "Dub Checker has to be open for this (minimised is fine). If a scan came due while it "
+                             "was closed, it runs about a minute after you open it. The scan uses the source and "
+                             "folder chosen in the main window, and never interrupts a scan you started yourself.")
         return page
 
     # ------------------------------------------------------------ behaviour
@@ -602,7 +791,7 @@ class SettingsDialog(Dialog):
                     "on AniList. Shows Sonarr doesn't have get no air status. They're matched by folder name, so "
                     "this works for local files scans too.")
             if not (self.sonarr_url.get().strip() and self.sonarr_key.get().strip()):
-                text += " Enter Sonarr's address and API key in the Sonarr tab first."
+                text += " Enter Sonarr's address and API key on the Sonarr page first."
         elif source == "off":
             text = "No air status: nothing extra is looked up, and the Air status column and Airing tab are hidden."
         else:
@@ -636,7 +825,8 @@ class SettingsDialog(Dialog):
 
     def _test_connection(self) -> None:
         self.test_button.state(("disabled",))
-        self.test_result.configure(text="Connecting...", style="TLabel")
+        self.test_result.configure(text="Connecting...", style="Card.TLabel")
+        self.test_result.grid()
         url, key = self.sonarr_url.get(), self.sonarr_key.get()
 
         def work() -> None:
@@ -661,7 +851,7 @@ class SettingsDialog(Dialog):
         if not self.winfo_exists():
             return
         kind, _, text = message.partition(":")
-        self.test_result.configure(text=text, style="Good.TLabel" if kind == "ok" else "Bad.TLabel")
+        self.test_result.configure(text=text, style="Card.Good.TLabel" if kind == "ok" else "Card.Bad.TLabel")
         self.test_button.state(("!disabled",))
 
     def _int(self, variable: tk.StringVar, name: str, low: int, high: int) -> int:
@@ -689,7 +879,7 @@ class SettingsDialog(Dialog):
             return
         path_from, path_to = self.path_from.get().strip(), self.path_to.get().strip()
         if bool(path_from) != bool(path_to):
-            self.notebook.select(2)
+            self.select_pane(2)
             messagebox.showerror(APP_NAME, "Path mapping needs both paths filled in, or neither.", parent=self)
             return
 
