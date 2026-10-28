@@ -1,4 +1,4 @@
-"""Episode details, Dismissed shows, Fix match and Settings windows."""
+"""Episode details, Dismissed shows, Delete, Fix match and Settings windows."""
 from __future__ import annotations
 
 import logging
@@ -16,7 +16,8 @@ from dubchecker import APP_NAME, __version__, dpapi, glass, theme
 from dubchecker import ui_common as ui
 from dubchecker.anilist import parse_anilist_id
 from dubchecker.models import FileStatus, ShowResult
-from dubchecker.sonarr import SonarrClient, SonarrError, connection_summary
+from dubchecker.sonarr import (DELETE_FILES, DELETE_FILES_UNMONITOR, DELETE_SHOW, DeleteTarget, SonarrClient,
+                               SonarrError, connection_summary)
 
 if TYPE_CHECKING:
     from dubchecker.gui import App
@@ -275,6 +276,80 @@ class DismissedDialog(Dialog):
         if folders:
             self.app.restore_shows(folders)
             self._fill()
+
+
+# ---------------------------------------------------------------- deleting
+
+class DeleteDialog(Dialog):
+    """Asks how to delete the selected shows from Sonarr; nothing is chosen until you pick."""
+
+    CHOICES = (
+        (DELETE_SHOW, "Delete the shows entirely",
+         "Removes the whole shows from Sonarr, even if you picked only some seasons, and deletes their "
+         "folders, with every file in them, from the disk."),
+        (DELETE_FILES_UNMONITOR, "Delete their episodes and unmonitor them",
+         "Deletes the episode files, and unmonitors the shows (or just those seasons) so Sonarr doesn't "
+         "download them again. The shows stay in Sonarr."),
+        (DELETE_FILES, "Just delete their episodes",
+         "Deletes the episode files. The shows stay in Sonarr, still monitored, so Sonarr may download "
+         "them again."),
+    )
+
+    def __init__(self, app: App, targets: list[tuple[DeleteTarget, list[str]]]) -> None:
+        super().__init__(app, f"Delete from Sonarr - {APP_NAME}")
+        self.targets = targets
+        frame = ttk.Frame(self, padding=self.px(20))
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+        wrap = self.px(600)
+        shows = ui.plural(len(targets), "show")
+        ttk.Label(frame, text=f"Delete {shows} from Sonarr?", style="Subtitle.TLabel").grid(row=0, column=0,
+                                                                                            sticky="w")
+        ttk.Label(frame, style="Muted.TLabel", wraplength=wrap,
+                  text="Sonarr deletes the files from the disk. This can't be undone.").grid(
+            row=1, column=0, sticky="w", pady=(self.px(2), self.px(10)))
+
+        names = tk.Listbox(frame, height=min(8, len(targets)), activestyle="none", selectmode="browse",
+                           highlightthickness=0, borderwidth=0, background=app.palette["card"],
+                           foreground=app.palette["fg"], selectbackground=app.palette["card_selected"],
+                           selectforeground=app.palette["fg"], font="SunValleyBodyFont")
+        names.grid(row=2, column=0, sticky="nsew")
+        by_key = app.model.results
+        for target, keys in targets:
+            seasons = "" if target.seasons is None else " (" + ", ".join(
+                by_key[k].group.season_label for k in keys if k in by_key) + ")"
+            names.insert("end", f"  {target.title}{seasons}")
+
+        self.choice = tk.StringVar(value="")
+        choices = ttk.Frame(frame)
+        choices.grid(row=3, column=0, sticky="ew", pady=(self.px(14), 0))
+        for row, (value, label, hint) in enumerate(self.CHOICES):
+            ttk.Radiobutton(choices, text=label, value=value, variable=self.choice,
+                            command=self._update_button).grid(row=row * 2, column=0, sticky="w",
+                                                              pady=(self.px(6) if row else 0, 0))
+            ttk.Label(choices, text=hint, style="Muted.TLabel", wraplength=wrap).grid(
+                row=row * 2 + 1, column=0, sticky="w", padx=(self.px(30), 0))
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, sticky="e", pady=(self.px(18), 0))
+        self.delete_button = ttk.Button(buttons, text="Delete", style="Accent.TButton", command=self._delete)
+        self.delete_button.pack(side="left", padx=(0, self.px(8)))
+        cancel = ttk.Button(buttons, text="Cancel", command=self.close)
+        cancel.pack(side="left")
+        self._update_button()
+        self.present(680, 420 + 22 * min(8, len(targets)))
+        cancel.focus_set()
+
+    def _update_button(self) -> None:
+        self.delete_button.state(("!disabled",) if self.choice.get() else ("disabled",))
+
+    def _delete(self) -> None:
+        action = self.choice.get()
+        if not action:
+            return
+        self.close()
+        self.app.delete_in_sonarr(self.targets, action)
 
 
 

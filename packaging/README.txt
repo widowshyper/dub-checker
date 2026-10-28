@@ -86,6 +86,11 @@ Don't care about a show? Right-click it and choose "Dismiss this show". It's
 hidden from every tab, even after a rescan. "Dismissed shows" above the list
 brings it back.
 
+To act on several shows at once, Ctrl-click or Shift-click them. Press Delete
+(or right-click > Delete from Sonarr...) to have Sonarr delete them in one of
+three ways: the shows entirely, their episodes and unmonitor them, or just
+their episodes. Files are deleted from the disk and can't be got back.
+
 Your last results are kept when you close Dub Checker and shown again the
 next time you open it.
 

@@ -26,7 +26,8 @@ from dubchecker.pipeline import ScanOutcome, ScanPipeline, evaluate_season
 from dubchecker.results_store import SavedScan, delete_scan, load_scan, save_scan
 from dubchecker.categorize import dub_tag
 from dubchecker.sonarr import (TAG_DUAL_AUDIO, TAG_DUB_PENDING, TAG_ENGLISH_ONLY, TAG_MISSING_DUB, TAG_NO_DUB,
-                               SonarrClient, SonarrError, apply_dub_tags, search_for_replacements, series_page_url)
+                               DELETE_SHOW, DeleteTarget, SonarrClient, SonarrError, apply_dub_tags, delete_from_sonarr,
+                               search_for_replacements, series_page_url)
 
 log = logging.getLogger(__name__)
 
@@ -551,7 +552,7 @@ class App:
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(frame, columns=[c[0] for c in COLUMNS], show=("tree", "headings"),
-                                 selectmode="browse", style="Results.Treeview")
+                                 selectmode="extended", style="Results.Treeview")
         self.tree.heading("#0", text="Audio", anchor="w", command=lambda: self.sort_by("audio"))
         self.tree.column("#0", width=self.px(BAR_WIDTH + 18), minwidth=self.px(BAR_WIDTH + 18), stretch=False)
         for column, heading, width, stretch in COLUMNS:
@@ -583,6 +584,7 @@ class App:
         self.tree.bind("<space>", self._on_return)
         self.tree.bind("<Right>", lambda _e: self._on_arrow_key(True))
         self.tree.bind("<Left>", lambda _e: self._on_arrow_key(False))
+        self.tree.bind("<Delete>", lambda _e: self.delete_selected())
         self.tree.bind("<Button-3>", self._on_right_click)
         if sys.platform == "darwin":
             self.tree.bind("<Button-2>", self._on_right_click)
@@ -626,6 +628,7 @@ class App:
         tip = ttk.Label(footer, style="Caption.TLabel",
                         text="Tip: click a row's arrow or audio bar (or double-click it) to open it; double-click an "
                              "episode for its audio tracks; right-click a show to fix its match, dismiss it and more. "
+                             "Ctrl- or Shift-click to select several shows; Delete deletes them in Sonarr. "
                              "F5 scans, Esc stops.")
         tip.grid(row=0, column=0, sticky="w")
         footer.bind("<Configure>", lambda e: tip.configure(wraplength=max(self.px(300), e.width)), add="+")
@@ -891,6 +894,8 @@ class App:
                     changed = changed or bool(items)
                 elif kind == "replace":
                     changed = self._on_replaced(payload[0]) or changed
+                elif kind == "deleted":
+                    self._on_deleted(*payload)
                 elif kind == "notice":
                     self.status_var.set(payload[0])
                 elif kind == "open_url":
@@ -1231,6 +1236,15 @@ class App:
         self._dismissed_changed()
         self.status_var.set(f"Dismissed {title}. It's hidden from every tab now; to bring it back, click "
                             "Dismissed shows above the list.")
+
+    def dismiss_shows(self, shows: list[tuple[str, str]]) -> None:
+        """Dismiss several shows at once: (folder name, title) pairs."""
+        when = time.time()
+        for show_id, title in shows:
+            self.dismissed.add(show_id, title, when)
+        self._dismissed_changed()
+        self.status_var.set(f"Dismissed {ui.plural(len(shows), 'show')}. To bring them back, click Dismissed shows "
+                            "above the list.")
 
     def restore_shows(self, show_ids: list[str]) -> None:
         self.dismissed.remove(show_ids)
@@ -1593,9 +1607,17 @@ class App:
         iid = self.tree.identify_row(event.y)
         if not iid:
             return
+        menu = tk.Menu(self.root, tearoff=False)
+        selection = self.tree.selection()
+        if iid in selection and len(selection) > 1:  # Ctrl- or Shift-clicked several rows
+            self._selection_menu(menu, selection)
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+            return
         self.tree.selection_set(iid)
         self.tree.focus(iid)
-        menu = tk.Menu(self.root, tearoff=False)
         result = self._result_for(iid)
         episode = self._file_for(iid)
         if episode is not None and result is not None:
@@ -1635,6 +1657,8 @@ class App:
             menu.add_separator()
             menu.add_command(label="Open in Sonarr", command=lambda: self.open_in_sonarr(show_id, title))
             self._add_sonarr_searches(menu, seasons, episode)
+            if episode is None:
+                menu.add_command(label="Delete from Sonarr...", command=self.delete_selected)
         menu.add_separator()
         for name in ui.nyaa_titles(seasons):
             menu.add_command(label=f"Search Nyaa for “{ui.nyaa_query(name)}”",
@@ -1647,6 +1671,20 @@ class App:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _selection_menu(self, menu: tk.Menu, selection: tuple[str, ...]) -> None:
+        """The right-click menu when several rows are selected."""
+        targets = ui.delete_targets(selection, self.model)
+        shows = ui.plural(len(targets), "show")
+        menu.add_command(label=f"Delete {shows} from Sonarr..." if targets else "Delete from Sonarr...",
+                         command=self.delete_selected,
+                         state="normal" if targets and self.sonarr_configured else "disabled")
+        if not self.sonarr_configured:
+            menu.add_command(label="(Set up Sonarr in Settings to delete shows)", state="disabled")
+        menu.add_separator()
+        menu.add_command(label=f"Dismiss {shows} (hide them from every tab)", state="normal" if targets else "disabled",
+                         command=lambda: self.dismiss_shows([(t.folder_name, t.title) for t, _ in targets]))
+        menu.add_command(label="Clear the selection", command=lambda: self.tree.selection_set(()))
 
     def _add_sonarr_searches(self, menu: tk.Menu, seasons: list[ShowResult], episode: FileResult | None) -> None:
         """The replacement searches: for episodes missing English (original language only), and for episodes
@@ -1802,6 +1840,51 @@ class App:
         thread = threading.Thread(target=work, name="sonarr-tags", daemon=True)
         self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
         thread.start()
+
+    def delete_selected(self) -> None:
+        """Ask how to delete the selected shows and seasons from Sonarr (the Delete key, or the right-click
+        menu)."""
+        if not self.sonarr_configured or self.scanning:
+            if self.scanning:
+                self.status_var.set("Wait for the scan to finish before deleting shows.")
+            return
+        targets = ui.delete_targets(self.tree.selection(), self.model)
+        if targets:
+            from dubchecker.dialogs import DeleteDialog
+            DeleteDialog(self, targets)
+
+    def delete_in_sonarr(self, targets: list[tuple[DeleteTarget, list[str]]], action: str) -> None:
+        """Delete in the background; the deleted seasons then leave the list."""
+        self.status_var.set(f"Deleting {ui.plural(len(targets), 'show')} in Sonarr...")
+        keys = {target.folder_name: season_keys for target, season_keys in targets}
+        if action == DELETE_SHOW:  # the whole show goes, whichever seasons were picked
+            keys = {folder: [s.key for s in self.model.by_show().get(folder, [])] for folder in keys}
+
+        def work() -> None:
+            try:
+                client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
+                report = delete_from_sonarr(client, [target for target, _ in targets], action)
+                gone = [key for folder in report.done for key in keys[folder]]
+                self.queue.put(("deleted", (gone, report.text(), bool(report.failed))))
+            except SonarrError as exc:
+                self.queue.put(("error", (f"Couldn't delete in Sonarr: {exc}",)))
+            except Exception as exc:
+                log.exception("Deleting in Sonarr failed")
+                self.queue.put(("error", (f"Couldn't delete in Sonarr: {exc}",)))
+
+        thread = threading.Thread(target=work, name="sonarr-delete", daemon=True)
+        self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
+        thread.start()
+
+    def _on_deleted(self, keys: list[str], text: str, failed: bool) -> None:
+        if keys:
+            self.model.remove(keys)
+            self.update_cards()
+            self.refresh_table()
+            self.save_results()
+        self.status_var.set(text.split(" Couldn't")[0] if failed else text)
+        if failed:
+            messagebox.showerror(APP_NAME, text, parent=self.root)
 
     def search_sonarr(self, seasons: list[ShowResult], files: list[str] | None = None, english: bool = False) -> None:
         """Ask Sonarr to look for new releases of episodes that only have the original-language audio, or

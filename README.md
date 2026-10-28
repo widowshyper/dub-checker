@@ -138,6 +138,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
 - **Search** (Ctrl+F) narrows the list by name; Esc clears it.
 - **Air status** (the drop-down next to Search) lists only seasons that are Airing, Not yet aired, On hiatus, Finished, Cancelled or Not checked. The tab counts follow it, for example "1 of 19" when only 1 of a tab's 19 shows is finished. It's hidden when air status is off.
 - **Dismissing a show:** right-click it and choose **Dismiss this show**. It's hidden from every tab, the counts and exports, and stays hidden after a rescan. **Dismissed shows** above the list shows what you've dismissed and brings shows back.
+- **Selecting several shows:** Ctrl-click or Shift-click rows to select more than one, then right-click them to dismiss them all at once or delete them in Sonarr (see [Deleting shows](#deleting-shows)).
 - **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group, air status and rating (and where the rating came from).
 - **Your results are kept.** When you close Dub Checker and open it again, the last scan is back, with the same tab and open shows, and the status line says when it was made. A scan that was stopped, or still running when you closed the window, keeps the part that was finished.
 - **Clear results** empties the table, resets the window and forgets the saved list, so it doesn't come back next time. Your settings, manual matches, and what Dub Checker knows about your files and AniList are kept, so the next scan is quick. To forget saved AniList answers, click **Clear** next to Saved online info in **Settings > General**.
@@ -204,6 +205,21 @@ Choose **Sonarr** in the sidebar's Scan section, then click **Change...** next t
 - To keep the tags up to date, turn on **Settings > Sonarr > Tag shows in Sonarr after every scan**. It then runs after each finished scan, including scheduled ones, without asking, and reports on the status line.
 
 Sonarr only replaces a file when it finds a release it rates higher under your quality profile. To make it prefer dual-audio or English releases, give them a higher score with a custom format in Sonarr. For English-only episodes, score dual-audio releases higher.
+
+### Deleting shows
+
+Select one or more shows or seasons (Ctrl-click or Shift-click for several), then press **Delete** or right-click and choose **Delete from Sonarr...**. You pick one of three ways, and nothing is chosen for you:
+
+| Choice | What happens |
+|---|---|
+| **Delete the shows entirely** | Sonarr removes the whole shows (even if you picked only some seasons) and deletes their folders from the disk. |
+| **Delete their episodes and unmonitor them** | Sonarr deletes the episode files and unmonitors the shows, or just the selected seasons, so it doesn't download them again. The shows stay in Sonarr. |
+| **Just delete their episodes** | Sonarr deletes the episode files. The shows stay in Sonarr, still monitored, so it may download them again. |
+
+- A show row means the whole show; season rows mean only those seasons. Episode rows are left out.
+- Files are deleted by Sonarr, from the disk, and can't be got back. The deleted shows and seasons then leave the list.
+- Shows are found in Sonarr by folder name, then title, so this works after a Local files scan too. Shows Sonarr doesn't have are skipped and named on the status line.
+- It needs Sonarr set up in Settings.
 
 Works with Sonarr v3, v4 and v5 (API v3). Manual matches are shared between folder scans and Sonarr scans because both use the series folder name.
 

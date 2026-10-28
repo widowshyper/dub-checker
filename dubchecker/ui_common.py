@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 from dubchecker.dub_sources import SOURCE_FILES
 from dubchecker.models import (Category, FileResult, FileStatus, Lang, Rating, ShowResult, rating_from_match,
                                season_sort_key)
+from dubchecker.sonarr import DeleteTarget
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 INDENT = "  "  # two em spaces: season rows under their show, tracks under their file
@@ -460,6 +461,30 @@ class ResultsModel:
 
 
 # ---------------------------------------------------------------- misc helpers
+
+def delete_targets(iids: list[str] | tuple[str, ...], model: ResultsModel) -> list[tuple[DeleteTarget, list[str]]]:
+    """What the selected rows ask to delete, one entry per show: the target for Sonarr and the seasons
+    (result keys) it covers. A show row means the whole show; season rows mean those seasons, or the whole
+    show when they are all of it. Episode rows are left out."""
+    shows = model.by_show()
+    picked: dict[str, set[str] | None] = {}  # show folder -> season keys; None for the whole show
+    for iid in iids:
+        if iid.startswith("p|") and iid[2:] in shows:
+            picked[iid[2:]] = None
+        elif iid.startswith("s|") and (r := model.results.get(iid[2:])) is not None:
+            keys = picked.setdefault(r.group.folder_name, set())
+            if keys is not None:
+                keys.add(r.key)
+    targets = []
+    for folder, keys in picked.items():
+        seasons = shows[folder]
+        chosen = [s for s in seasons if keys is None or s.key in keys]
+        whole = len(chosen) == len(seasons) or any(s.group.season is None for s in chosen)
+        numbers = None if whole else {int(s.group.season) for s in chosen if s.group.season is not None}
+        targets.append((DeleteTarget(folder, seasons[0].group.show_title, numbers),
+                        [s.key for s in (seasons if whole else chosen)]))
+    return targets
+
 
 def asset_path(name: str) -> Path:
     return ASSETS / name

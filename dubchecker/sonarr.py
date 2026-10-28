@@ -123,6 +123,8 @@ class SonarrClient:
                               "e.g. http://localhost:8989/sonarr")
         if response.status_code >= 400:
             raise SonarrError(f"Sonarr answered with an error (HTTP {response.status_code}).")
+        if not response.content:
+            return None  # e.g. after deleting something
         try:
             return response.json()
         except ValueError as exc:
@@ -168,6 +170,32 @@ class SonarrClient:
         """Add (``apply="add"``) or remove (``"remove"``) tags on many series at once."""
         self._request("PUT", "/api/v3/series/editor",
                       body={"seriesIds": sorted(series_ids), "tags": sorted(tag_ids), "applyTags": apply})
+
+    def delete_series(self, series_id: int) -> None:
+        """Remove a series from Sonarr and delete its folder from the disk."""
+        self._request("DELETE", f"/api/v3/series/{series_id}",
+                      params={"deleteFiles": "true", "addImportListExclusion": "false"})
+
+    def delete_episode_files(self, file_ids: list[int]) -> None:
+        """Delete these episode files from the disk (Sonarr keeps the episodes, now without files)."""
+        self._request("DELETE", "/api/v3/episodefile/bulk", body={"episodeFileIds": sorted(file_ids)})
+
+    def monitor_episodes(self, episode_ids: list[int], monitored: bool) -> None:
+        self._request("PUT", "/api/v3/episode/monitor", body={"episodeIds": sorted(episode_ids),
+                                                             "monitored": monitored})
+
+    def unmonitor_seasons(self, series_id: int, seasons: set[int] | None) -> None:
+        """Unmonitor these seasons of a series, or (``None``) the whole series and every season, so Sonarr
+        doesn't download them again."""
+        data = self._get(f"/api/v3/series/{series_id}")
+        if not isinstance(data, dict):
+            raise SonarrError("Sonarr didn't send the series back.")
+        if seasons is None:
+            data["monitored"] = False
+        for season in data.get("seasons") or []:
+            if seasons is None or season.get("seasonNumber") in seasons:
+                season["monitored"] = False
+        self._request("PUT", f"/api/v3/series/{series_id}", body=data)
 
     def find_series(self, folder_name: str, title: str = "") -> SonarrSeries | None:
         """The series whose folder has this name (as used by both scan types), else one with the same title."""
@@ -261,6 +289,75 @@ class SeriesIndex:
 
     def find(self, folder_name: str, title: str) -> SonarrSeries | None:
         return self.by_folder.get(folder_name.casefold()) or self.by_title.get(_plain_title(title))
+
+
+# ---------------------------------------------------------------- deleting
+
+DELETE_SHOW, DELETE_FILES_UNMONITOR, DELETE_FILES = "show", "files_unmonitor", "files"
+
+
+@dataclass
+class DeleteTarget:
+    folder_name: str
+    title: str
+    seasons: set[int] | None = None  # None: the whole show
+
+
+@dataclass
+class DeleteReport:
+    action: str
+    done: list[str] = field(default_factory=list)            # folder names of the shows dealt with
+    files: int = 0                                           # episode files deleted (not counted for DELETE_SHOW)
+    not_in_sonarr: list[str] = field(default_factory=list)   # titles
+    failed: list[str] = field(default_factory=list)          # "title: why"
+
+    def text(self) -> str:
+        shows = f"{len(self.done):,} show" + ("" if len(self.done) == 1 else "s")
+        if self.action == DELETE_SHOW:
+            text = f"Deleted {shows} from Sonarr, with their files."
+        else:
+            files = f"{self.files:,} episode file" + ("" if self.files == 1 else "s")
+            text = f"Deleted {files} of {shows}" + (" and unmonitored them in Sonarr."
+                                                    if self.action == DELETE_FILES_UNMONITOR else ".")
+        if self.not_in_sonarr:
+            text += f" Not found in Sonarr: {', '.join(self.not_in_sonarr)}."
+        if self.failed:
+            text += f" Couldn't delete {'; '.join(self.failed)}"
+        return text
+
+
+def delete_from_sonarr(client: SonarrClient, targets: list[DeleteTarget], action: str) -> DeleteReport:
+    """Delete shows from Sonarr with their files (``DELETE_SHOW``), or delete their episode files, with or
+    without unmonitoring them. Shows are found by folder name, then title. One show failing doesn't stop
+    the others."""
+    index = SeriesIndex(client.series())
+    report = DeleteReport(action)
+    for target in targets:
+        series = index.find(target.folder_name, target.title)
+        if series is None:
+            report.not_in_sonarr.append(target.title)
+            continue
+        try:
+            if action == DELETE_SHOW:
+                client.delete_series(series.id)
+            else:
+                wanted = target.seasons
+                files = [int(ef["id"]) for ef in client.episode_files(series.id)
+                         if "id" in ef and (wanted is None or ef.get("seasonNumber") in wanted)]
+                if action == DELETE_FILES_UNMONITOR:  # first, so Sonarr can't start downloading them again
+                    episodes = [int(e["id"]) for e in client.episodes(series.id)
+                                if "id" in e and (wanted is None or e.get("seasonNumber") in wanted)]
+                    if episodes:
+                        client.monitor_episodes(episodes, False)
+                    client.unmonitor_seasons(series.id, wanted)
+                if files:
+                    client.delete_episode_files(files)
+                report.files += len(files)
+        except SonarrError as exc:
+            report.failed.append(f"{target.title}: {exc}")
+            continue
+        report.done.append(target.folder_name)
+    return report
 
 
 # ---------------------------------------------------------------- dub tags
