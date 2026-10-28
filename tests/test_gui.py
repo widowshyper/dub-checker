@@ -116,6 +116,7 @@ class ClearResultsTests(unittest.TestCase):
     def test_clear_results_resets_the_window_but_keeps_saved_data(self) -> None:
         self.fill()
         self.app.save_results()
+        self.assertTrue(self.app.saver.flush())
         self.assertTrue(self.app.results_path.exists())
         self.assertEqual(len(self.app.tree.get_children()), 1)
         self.assertEqual(self.app.cards["NEEDS_DUB"].count.cget("text"), "1")
@@ -136,6 +137,7 @@ class ClearResultsTests(unittest.TestCase):
         self.assertIsNot(self.cache.get_anilist("search:show", 30), MISSING)
         self.assertEqual(Overrides(self.ctx.data_dir / "overrides.json").get("Show|S2"), 4242)
         # ...but the list itself is forgotten, so it doesn't come back after a restart.
+        self.assertTrue(self.app.saver.flush())
         self.assertFalse(self.app.results_path.exists())
 
     def test_results_are_still_there_after_closing_and_reopening(self) -> None:
@@ -212,7 +214,8 @@ class ClearResultsTests(unittest.TestCase):
         self.assertTrue(self.app.sonarr_configured)
         results = [season("Alpha", 2, Category.NEEDS_DUB)]
         with mock.patch("dubchecker.gui.messagebox.askyesno", return_value=True) as ask, \
-                mock.patch("dubchecker.gui.search_for_replacements", return_value="Sonarr is searching.") as search:
+                mock.patch("dubchecker.sonarr_actions.search_for_replacements",
+                           return_value="Sonarr is searching.") as search:
             self.app.search_sonarr(results)
             for thread in self.app.helpers:
                 thread.join(5)

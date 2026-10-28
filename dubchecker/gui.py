@@ -13,7 +13,7 @@ import tkinter.font as tkfont
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Any
+from typing import Any, Callable
 
 from dubchecker import APP_NAME, __version__, glass, theme
 from dubchecker import ui_common as ui
@@ -21,13 +21,11 @@ from dubchecker.cache import Cache
 from dubchecker.config import AIR_FILTERS, Config, Dismissed, Overrides
 from dubchecker.dub_sources import make_online_lookup
 from dubchecker.media_probe import MediaProber
-from dubchecker.models import STATUS_BY_CODE, Category, FileResult, FileStatus, ShowResult, language_word
+from dubchecker.models import STATUS_BY_CODE, Cancelled, Category, FileResult, FileStatus, ShowResult, size_text
 from dubchecker.pipeline import ScanOutcome, ScanPipeline, evaluate_season
-from dubchecker.results_store import SavedScan, delete_scan, load_scan, save_scan
-from dubchecker.categorize import dub_tag
-from dubchecker.sonarr import (TAG_DUAL_AUDIO, TAG_DUB_PENDING, TAG_ENGLISH_ONLY, TAG_MISSING_DUB, TAG_NO_DUB,
-                               DELETE_SHOW, DeleteTarget, SonarrClient, SonarrError, apply_dub_tags, delete_from_sonarr,
-                               search_for_replacements, series_page_url)
+from dubchecker.results_store import ResultsSaver, SavedScan, load_scan
+from dubchecker.sonarr import SonarrClient, SonarrError
+from dubchecker.sonarr_actions import SonarrActions
 
 log = logging.getLogger(__name__)
 
@@ -258,7 +256,7 @@ class SidebarItem(tk.Canvas):
         self._images = images
 
 
-class App:
+class App(SonarrActions):
     def __init__(self, root: tk.Tk, ctx: AppContext) -> None:
         self.root = root
         self.ctx = ctx
@@ -269,6 +267,7 @@ class App:
         self.worker: threading.Thread | None = None
         self.helpers: list[threading.Thread] = []
         self.scanning = False
+        self.deleting = False  # Sonarr is deleting shows: no scan starts meanwhile, so the two can't cross
         self.dismissed: Dismissed = ctx.dismissed  # type: ignore[assignment]  # set by AppContext
         self.model = ui.ResultsModel()
         self.model.dismissed = self.dismissed.keys()
@@ -293,6 +292,7 @@ class App:
         self._refresh_id: str | None = None  # a scheduled table rebuild during a scan
         self._last_refresh = 0.0
         self.results_path = ctx.data_dir / "last_scan.json"
+        self.saver = ResultsSaver(self.results_path)
         self.results_source = self.config.scan_source  # where the results on screen came from
         self.results_time = 0.0
         self.results_stopped = False
@@ -668,7 +668,8 @@ class App:
         for status, color in EPISODE_TEXT_COLORS.items():  # episodes that need attention stand out
             self.tree.tag_configure(f"audio_{status.name}", foreground=pal[color])
         self.tree.tag_configure("audio_PENDING", foreground=pal[PENDING_COLOR])
-        self.empty_label.configure(background=pal["bg"], foreground=pal["muted"])  # the table's empty area shows the window colour
+        # The table's empty area shows the window colour.
+        self.empty_label.configure(background=pal["bg"], foreground=pal["muted"])
         self.bars.clear()
         for label, status in self.legend_labels:
             label.configure(image=self.bars.square(status))
@@ -752,6 +753,9 @@ class App:
                 messagebox.showinfo(APP_NAME, text, parent=self.root)
             return False
 
+        if self.deleting:
+            return refuse("Sonarr is still deleting the shows you chose. Scan again once it's finished.")
+
         source = self.source_var.get()
         path = ""
         if source == "folder":
@@ -812,12 +816,12 @@ class App:
             pipeline = ScanPipeline(self.config, self.ctx.cache, self.ctx.overrides, prober, lookup_factory, emit,
                                     cancel)
             if source == "sonarr":
-                pipeline.run(sonarr=SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key), only=only)
+                pipeline.run(sonarr=self.sonarr_client(), only=only)
             else:
                 # Air status from Sonarr works after a local files scan too, when Sonarr is set up.
                 wants_sonarr = self.config.air_status_source == "sonarr" and self.sonarr_configured
-                air_client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key) if wants_sonarr else None
-                dates_client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key) \
+                air_client = self.sonarr_client() if wants_sonarr else None
+                dates_client = self.sonarr_client() \
                     if self.sonarr_configured else None  # when episodes aired, for dubs on their way
                 pipeline.run(root=path, air_client=air_client, only=only, dates_client=dates_client)
         except Exception as exc:  # the pipeline reports its own errors; this is a last resort
@@ -837,7 +841,7 @@ class App:
         if self.scanning:
             return
         self._reset_view()
-        delete_scan(self.results_path)
+        self.saver.save(None)
 
     def _reset_view(self) -> None:
         self.model.clear()
@@ -1178,7 +1182,7 @@ class App:
         self._schedule_id = None
         try:
             due = self.schedule_due_at()
-            if due is not None and time.time() >= due and not self.scanning:
+            if due is not None and time.time() >= due and not self.scanning and not self.deleting:
                 self.config.schedule_last_run = time.time()
                 self.ctx.save_config()
                 self.start_scan(self.config.schedule_scope, scheduled=True)
@@ -1274,7 +1278,7 @@ class App:
     def _season_values(self, r: ShowResult, label: str) -> tuple:
         rating = ui.rating_of(r)
         return (label, ui.anilist_text(r), ui.air_status_text(r), ui.rating_text(rating.value if rating else None),
-                r.episodes, ui.size_text(r.size), r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
+                r.episodes, size_text(r.size), r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
                 ui.match_text(r), ui.notes_text(r), ui.group_title(r))
 
     def _parent_values(self, row: ui.ShowRow, label: str) -> tuple:
@@ -1288,15 +1292,16 @@ class App:
                 groups.append(ui.group_title(s))
         speaker = ui.show_air_status(row.all_seasons)
         return (label, row.seasons_text(), ui.air_status_text(speaker) if speaker else "-",
-                ui.rating_text(ui.show_rating(row.all_seasons)), row.total("episodes"), ui.size_text(row.total("size")),
-                row.total("dual"), row.total("original_only"), row.total("english_only"), ", ".join(sources) or "-", "", row.also_text(),
-                ", ".join(groups))
+                ui.rating_text(ui.show_rating(row.all_seasons)), row.total("episodes"), size_text(row.total("size")),
+                row.total("dual"), row.total("original_only"), row.total("english_only"), ", ".join(sources) or "-",
+                "", row.also_text(), ", ".join(groups))
 
     @staticmethod
     def _episode_values(f: FileResult, label: str, note: str) -> tuple:
         tick = "✓"
-        return (label, "", "", "", "", ui.size_text(f.size), tick if f.status is FileStatus.DUAL else "",
-                tick if f.status is FileStatus.ORIGINAL_ONLY else "", tick if f.status is FileStatus.ENGLISH_ONLY else "",
+        return (label, "", "", "", "", size_text(f.size), tick if f.status is FileStatus.DUAL else "",
+                tick if f.status is FileStatus.ORIGINAL_ONLY else "",
+                tick if f.status is FileStatus.ENGLISH_ONLY else "",
                 "", "", note, "")
 
     def _sort_value(self, row: ui.ShowRow, column: str) -> Any:
@@ -1448,7 +1453,8 @@ class App:
         for number, f in enumerate(r.files):
             waiting = number in r.pending  # its dub is still on its way
             note = ui.episode_note(f) + (f" - {ui.pending_note(r)}" if waiting else "")
-            self._insert_row(season_iid, f"e|{r.key}|{number}", self._episode_values(f, indent + ui.episode_label(f), note),
+            values = self._episode_values(f, indent + ui.episode_label(f), note)
+            self._insert_row(season_iid, f"e|{r.key}|{number}", values,
                              (stripe, "audio_PENDING" if waiting else f"audio_{f.status.name}"),
                              self.bars.square(None if waiting else f.status))
 
@@ -1489,7 +1495,8 @@ class App:
         # Tk sends these before it changes the state, so read it afterwards.
         iid = self.tree.focus()
         if self._can_open(iid):
-            self.root.after_idle(lambda: self.tree.exists(iid) and self._set_open(iid, bool(self.tree.item(iid, "open"))))
+            self.root.after_idle(
+                lambda: self.tree.exists(iid) and self._set_open(iid, bool(self.tree.item(iid, "open"))))
 
     def _on_arrow_key(self, open_it: bool) -> str:
         """Right opens a show or season; Left closes it, or jumps to the row it belongs to."""
@@ -1689,26 +1696,6 @@ class App:
                          command=lambda: self.dismiss_shows([(t.folder_name, t.title) for t, _ in targets]))
         menu.add_command(label="Clear the selection", command=lambda: self.tree.selection_set(()))
 
-    def _add_sonarr_searches(self, menu: tk.Menu, seasons: list[ShowResult], episode: FileResult | None) -> None:
-        """The replacement searches: for episodes missing English (original language only), and for episodes
-        missing the original language (English only). On an episode row, just that episode."""
-        if episode is not None:
-            english = episode.status is FileStatus.ENGLISH_ONLY
-            wanted = [episode.name] if episode.status in (FileStatus.ORIGINAL_ONLY, FileStatus.ENGLISH_ONLY) else []
-            menu.add_command(label="Search for a dual-audio replacement in Sonarr..." if english
-                             else "Search for a replacement in Sonarr...",
-                             command=lambda: self.search_sonarr(seasons, wanted, english),
-                             state="normal" if wanted else "disabled")
-            return
-        original, english = ui.original_only_files(seasons), ui.english_only_files(seasons)
-        if original or not english:
-            menu.add_command(label="Search for replacements in Sonarr...",
-                             command=lambda: self.search_sonarr(seasons, original),
-                             state="normal" if original else "disabled")
-        if english:
-            menu.add_command(label="Search for dual-audio replacements of the English-only episodes in Sonarr...",
-                             command=lambda: self.search_sonarr(seasons, english, english=True))
-
     def _seasons_in_view(self, parent_iid: str) -> list[ShowResult]:
         """The seasons listed under a show row with the tabs selected now."""
         view = self.view_tabs()
@@ -1773,179 +1760,15 @@ class App:
         ui.open_url(ui.nyaa_search_url(title))
         self.status_var.set(f"Opened a Nyaa search for “{ui.nyaa_query(title)}” in your browser.")
 
-    def open_in_sonarr(self, folder_name: str, title: str) -> None:
-        """Open the show's page in Sonarr in the web browser. Finding it asks Sonarr, so that's done
-        in the background."""
-        self.status_var.set(f"Finding {title} in Sonarr...")
-
-        def work() -> None:
-            try:
-                client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
-                url = series_page_url(client, folder_name, title)
-                self.queue.put(("open_url", (url, f"Opened {title} in Sonarr in your browser.")))
-            except SonarrError as exc:
-                self.queue.put(("error", (str(exc),)))
-            except Exception as exc:
-                log.exception("Opening the show in Sonarr failed")
-                self.queue.put(("error", (f"Couldn't find the show in Sonarr: {exc}",)))
-
-        thread = threading.Thread(target=work, name="sonarr-open", daemon=True)
-        self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
-        thread.start()
-
-    def dub_tags_wanted(self) -> dict[tuple[str, str], str | None]:
-        """Each show's Sonarr tag, by (folder name, title). Dismissed shows are left alone."""
-        return {(show_id, seasons[0].group.show_title): dub_tag(seasons)
-                for show_id, seasons in self.model.by_show().items() if show_id not in self.dismissed}
-
-    def tag_in_sonarr(self, automatic: bool = False) -> None:
-        """Tag shows dual-audio, missing-dub or no-dub in Sonarr. ``automatic`` (after a scan, from
-        Settings > Sonarr) asks nothing and reports on the status line only."""
-        if not self.sonarr_configured or self.scanning:
-            return
-        if not self.model.results:
-            if not automatic:
-                messagebox.showinfo(APP_NAME, "Scan your library first, so Dub Checker knows how to tag each show.",
-                                    parent=self.root)
-            return
-        wanted = self.dub_tags_wanted()
-        if not automatic:
-            counts = {tag: sum(1 for t in wanted.values() if t == tag)
-                      for tag in (TAG_DUAL_AUDIO, TAG_MISSING_DUB, TAG_NO_DUB, TAG_ENGLISH_ONLY, TAG_DUB_PENDING,
-                                  None)}
-            question = (
-                "Tag your shows in Sonarr?\n\n"
-                f"{TAG_DUAL_AUDIO}: {ui.plural(counts[TAG_DUAL_AUDIO], 'show')} (every episode has both languages)\n"
-                f"{TAG_MISSING_DUB}: {ui.plural(counts[TAG_MISSING_DUB], 'show')} (an English dub exists, but some "
-                "episodes don't have it)\n"
-                f"{TAG_NO_DUB}: {ui.plural(counts[TAG_NO_DUB], 'show')} (no English dub exists)\n"
-                f"{TAG_ENGLISH_ONLY}: {ui.plural(counts[TAG_ENGLISH_ONLY], 'show')} (some episodes have English "
-                "but not the original language)\n"
-                f"{TAG_DUB_PENDING}: {ui.plural(counts[TAG_DUB_PENDING], 'show')} (the dub of the newest episodes "
-                "is on its way)\n"
-                f"No tag: {ui.plural(counts[None], 'show')} (something to check manually)\n\n"
-                "A show whose tag changes loses its old one. Your other Sonarr tags aren't touched, and nor are "
-                "dismissed shows or shows Sonarr doesn't have.")
-            if not messagebox.askyesno(APP_NAME, question, parent=self.root):
-                return
-            self.status_var.set("Tagging your shows in Sonarr...")
-
-        def work() -> None:
-            try:
-                client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
-                self.queue.put(("notice", (apply_dub_tags(client, wanted).text(),)))
-            except SonarrError as exc:
-                self.queue.put(("notice" if automatic else "error", (f"Couldn't tag shows in Sonarr: {exc}",)))
-            except Exception as exc:
-                log.exception("Tagging in Sonarr failed")
-                self.queue.put(("notice" if automatic else "error", (f"Couldn't tag shows in Sonarr: {exc}",)))
-
-        thread = threading.Thread(target=work, name="sonarr-tags", daemon=True)
-        self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
-        thread.start()
-
-    def delete_selected(self) -> None:
-        """Ask how to delete the selected shows and seasons from Sonarr (the Delete key, or the right-click
-        menu)."""
-        if not self.sonarr_configured or self.scanning:
-            if self.scanning:
-                self.status_var.set("Wait for the scan to finish before deleting shows.")
-            return
-        targets = ui.delete_targets(self.tree.selection(), self.model)
-        if targets:
-            from dubchecker.dialogs import DeleteDialog
-            DeleteDialog(self, targets)
-
-    def delete_in_sonarr(self, targets: list[tuple[DeleteTarget, list[str]]], action: str) -> None:
-        """Delete in the background; the deleted seasons then leave the list."""
-        self.status_var.set(f"Deleting {ui.plural(len(targets), 'show')} in Sonarr...")
-        keys = {target.folder_name: season_keys for target, season_keys in targets}
-        if action == DELETE_SHOW:  # the whole show goes, whichever seasons were picked
-            keys = {folder: [s.key for s in self.model.by_show().get(folder, [])] for folder in keys}
-        sizes = {key: self.model.results[key].size for season_keys in keys.values() for key in season_keys
-                 if key in self.model.results}
-
-        def work() -> None:
-            try:
-                client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
-                report = delete_from_sonarr(client, [target for target, _ in targets], action)
-                gone = [key for folder in report.done for key in keys[folder]]
-                if not report.freed:  # Sonarr didn't say how big the files were; go by the scan
-                    report.freed = sum(sizes.get(key, 0) for key in gone)
-                self.queue.put(("deleted", (gone, report.text(), bool(report.failed))))
-            except SonarrError as exc:
-                self.queue.put(("error", (f"Couldn't delete in Sonarr: {exc}",)))
-            except Exception as exc:
-                log.exception("Deleting in Sonarr failed")
-                self.queue.put(("error", (f"Couldn't delete in Sonarr: {exc}",)))
-
-        thread = threading.Thread(target=work, name="sonarr-delete", daemon=True)
-        self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
-        thread.start()
-
-    def _on_deleted(self, keys: list[str], text: str, failed: bool) -> None:
-        if keys:
-            self.model.remove(keys)
-            self.update_cards()
-            self.refresh_table()
-            self.save_results()
-        self.status_var.set(text.split(" Couldn't")[0] if failed else text)
-        if failed:
-            messagebox.showerror(APP_NAME, text, parent=self.root)
-
-    def search_sonarr(self, seasons: list[ShowResult], files: list[str] | None = None, english: bool = False) -> None:
-        """Ask Sonarr to look for new releases of episodes that only have the original-language audio, or
-        (``english``) only English audio.
-
-        ``files`` limits it to those file names (one episode); by default it's all of them in ``seasons``.
-        """
-        if files is None:
-            files = ui.english_only_files(seasons) if english else ui.original_only_files(seasons)
-        if not seasons or not files:
-            return
-        group = seasons[0].group
-        labels = ", ".join(s.group.season_label for s in seasons if s.group.season_label)
-        what = f"{group.show_title}{f' ({labels})' if labels else ''}"
-        wanted = set(files)
-        language = "English" if english else language_word([f for s in seasons for f in s.files if f.name in wanted])
-        prefer = "dual-audio releases" if english else "dual-audio or English releases"
-        episodes = f"episode “{files[0]}”" if len(files) == 1 else ui.plural(len(files), "episode")
-        question = (f"Ask Sonarr to search for new releases of the {episodes} of {what} that only "
-                    f"{'has' if len(files) == 1 else 'have'} {language} audio?\n\nSonarr replaces a file only when "
-                    "it finds a release it rates higher under your quality profile. To make it prefer "
-                    f"{prefer}, give them a higher score with a custom format in Sonarr.")
-        if not messagebox.askyesno(APP_NAME, question, parent=self.root):
-            return
-        self.status_var.set(f"Asking Sonarr to search for {what}...")
-        seasons_numbers = [s.group.season for s in seasons]
-
-        def work() -> None:
-            try:
-                client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
-                message = search_for_replacements(client, group.folder_name, group.show_title, seasons_numbers, files)
-                self.queue.put(("notice", (message + " Check Sonarr's Activity page for what it finds.",)))
-            except SonarrError as exc:
-                self.queue.put(("error", (str(exc),)))
-            except Exception as exc:
-                log.exception("Sonarr search failed")
-                self.queue.put(("error", (f"Couldn't ask Sonarr to search: {exc}",)))
-
-        thread = threading.Thread(target=work, name="sonarr-search", daemon=True)
-        self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
-        thread.start()
-
     def save_results(self) -> None:
-        """Remember what's on screen so it's still there next time. An empty list forgets it."""
+        """Remember what's on screen so it's still there next time; an empty list forgets it. It's written in
+        the background (see ResultsSaver); closing the window waits for it."""
         if not self.model.results:
-            delete_scan(self.results_path)
+            self.saver.save(None)
             return
-        scan = SavedScan(list(self.model.results.values()), self.results_source, self.results_time or time.time(),
-                         self.results_stopped, sorted(self.tabs), sorted(self.expanded),
-                         sorted(self.expanded_seasons))
-        try:
-            save_scan(self.results_path, scan)
-        except OSError as exc:
-            log.warning("Couldn't save the results: %s", exc)
+        self.saver.save(SavedScan(list(self.model.results.values()), self.results_source,
+                                  self.results_time or time.time(), self.results_stopped, sorted(self.tabs),
+                                  sorted(self.expanded), sorted(self.expanded_seasons)))
 
     def _load_saved_results(self) -> None:
         saved = load_scan(self.results_path)
@@ -1974,22 +1797,44 @@ class App:
             return
         self.status_var.set(f"Checking AniList again for {result.group.display_title}...")
 
-        def work() -> None:
-            try:
-                service = make_online_lookup(self.ctx.cache, self.config, self.ctx.data_dir, self.closing, None)
-                new = evaluate_season(result.group, result.files, service, self.ctx.overrides.get(key),
-                                      self.config.confidence_threshold, self.config.air_status_source)
-                if self.config.air_status_source == "sonarr":
-                    new.air = result.air  # a new AniList match doesn't change what Sonarr says
-                new.rating = result.rating  # nor does it change Sonarr's rating
-                self.queue.put(("replace", (new,)))
-            except Exception as exc:
-                log.exception("Re-check failed")
-                self.queue.put(("notice", (f"Couldn't check AniList again: {exc}",)))
+        def work() -> tuple:
+            service = make_online_lookup(self.ctx.cache, self.config, self.ctx.data_dir, self.closing, None)
+            new = evaluate_season(result.group, result.files, service, self.ctx.overrides.get(key),
+                                  self.config.confidence_threshold, self.config.air_status_source)
+            if self.config.air_status_source == "sonarr":
+                new.air = result.air  # a new AniList match doesn't change what Sonarr says
+            new.rating = result.rating  # nor does it change Sonarr's rating
+            return "replace", (new,)
 
-        thread = threading.Thread(target=work, name="recheck", daemon=True)
+        self.background("recheck", work, lambda exc: ("notice", (f"Couldn't check AniList again: {exc}",)))
+
+    def background(self, name: str, work: Callable[[], tuple | None],
+                   on_error: Callable[[Exception], tuple]) -> threading.Thread:
+        """Run ``work`` on a thread of its own and post the message it returns (``(kind, payload)``, or None)
+        for the window; if it fails, post ``on_error``'s message instead. Sonarr's own errors are expected
+        and logged plainly, anything else with its traceback; Stop and closing (Cancelled) post nothing."""
+        def run() -> None:
+            try:
+                message = work()
+            except Cancelled:
+                return
+            except Exception as exc:
+                if isinstance(exc, SonarrError):
+                    log.warning("%s: %s", name, exc)
+                else:
+                    log.exception("%s failed", name)
+                message = on_error(exc)
+            if message is not None:
+                self.queue.put(message)
+
+        thread = threading.Thread(target=run, name=name, daemon=True)
         self.helpers = [t for t in self.helpers if t.is_alive()] + [thread]
         thread.start()
+        return thread
+
+    def sonarr_client(self) -> SonarrClient:
+        """A connection to the Sonarr in Settings."""
+        return SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
 
     def _on_replaced(self, result: ShowResult) -> bool:
         if not self.model.replace(result):
@@ -2016,18 +1861,18 @@ class App:
                 import csv  # only needed here
                 writer = csv.writer(fh)
                 writer.writerow(["Group", "Show", "Season", "Matched on AniList", "AniList page", "Air status",
-                                 "Rating (out of 10)", "Rating from", "Episodes", "Size (GB)", "Dual audio", "Original language only", "English only", "Dub confirmed by",
-                                 "Match %",
-                                 "Notes", "Folder"])
+                                 "Rating (out of 10)", "Rating from", "Episodes", "Size (GB)", "Dual audio",
+                                 "Original language only", "English only", "Dub confirmed by", "Match %", "Notes",
+                                 "Folder"])
                 for row in rows:
                     for r in row.seasons:
                         rating = ui.rating_of(r)
                         writer.writerow([ui.group_title(r), r.group.show_title, r.group.season_label,
                                          ui.anilist_text(r), r.match.url if r.match else "", ui.air_status_text(r),
                                          f"{rating.value:.1f}" if rating else "", rating.source if rating else "",
-                                         r.episodes, f"{r.size / 1024 ** 3:.2f}", r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
-                                         ui.match_text(r),
-                                         ui.notes_text(r), r.group.folder_name])
+                                         r.episodes, f"{r.size / 1024 ** 3:.2f}", r.dual, r.original_only,
+                                         r.english_only, ui.confirmed_text(r), ui.match_text(r), ui.notes_text(r),
+                                         r.group.folder_name])
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"Couldn't save the file:\n{exc}", parent=self.root)
             return
@@ -2042,6 +1887,8 @@ class App:
         if self.scanning:  # keep what was finished, marked as an unfinished scan
             self.results_time, self.results_stopped = time.time(), True
         self.save_results()
+        if not self.saver.flush():
+            log.warning("Saving the results took too long; they may not be there next time")
         try:
             if self.root.state() == "normal":
                 self.config.window_geometry = self.root.geometry()

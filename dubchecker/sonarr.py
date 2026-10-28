@@ -47,6 +47,25 @@ def _int(value: Any) -> int:
         return 0
 
 
+def sonarr_error_detail(response: Any, limit: int = 300) -> str:
+    """Sonarr's own explanation of an error, from its answer: ``{"message": ...}`` for most errors, or a
+    list of ``{"propertyName": ..., "errorMessage": ...}`` when it rejected what it was sent. Sonarr's
+    ``description`` (often a stack trace) is left out. '' when there's nothing readable."""
+    try:
+        data = response.json()
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        text = str(data.get("message") or data.get("error") or data.get("title") or "")
+    elif isinstance(data, list):
+        text = "; ".join(str(item.get("errorMessage") or "") for item in data if isinstance(item, dict))
+    else:
+        text = getattr(response, "text", "") or ""
+        text = "" if "<" in text else text  # an HTML error page says nothing useful
+    text = " ".join(text.split()).strip("; ")
+    return text if len(text) <= limit else text[:limit - 3].rstrip() + "..."
+
+
 def normalise_url(url: str) -> str:
     url = (url or "").strip().rstrip("/")
     if url and not re.match(r"^https?://", url, re.I):
@@ -130,7 +149,9 @@ class SonarrClient:
                               "in Sonarr (Settings > General), add it to the address, "
                               "e.g. http://localhost:8989/sonarr")
         if response.status_code >= 400:
-            raise SonarrError(f"Sonarr answered with an error (HTTP {response.status_code}).")
+            detail = sonarr_error_detail(response)
+            raise SonarrError(f"Sonarr answered with an error (HTTP {response.status_code})"
+                              + (f": {detail}" if detail else "."))
         if not response.content:
             return None  # e.g. after deleting something
         try:
@@ -458,11 +479,14 @@ class SonarrAirStatus(SeriesIndex):
                 self.next[key] = (episode.get("episodeNumber"), when)
 
     @classmethod
-    def fetch(cls, client: SonarrClient, now: float | None = None) -> SonarrAirStatus:
+    def fetch(cls, client: SonarrClient, now: float | None = None,
+              series: list[SonarrSeries] | None = None) -> SonarrAirStatus:
+        """``series``: Sonarr's series list if it's been asked for already."""
         start = datetime.fromtimestamp(time.time() if now is None else now, timezone.utc)
         end = start + timedelta(days=cls.CALENDAR_DAYS)
         iso = "%Y-%m-%dT%H:%M:%SZ"
-        return cls(client.series(), client.calendar(start.strftime(iso), end.strftime(iso)))
+        upcoming = client.calendar(start.strftime(iso), end.strftime(iso))
+        return cls(client.series() if series is None else series, upcoming)
 
     def air(self, folder_name: str, title: str, season: int | None) -> AirInfo | None:
         series = self.find(folder_name, title)

@@ -19,7 +19,8 @@ from tests.fakes import FakeLookup, FakeProber, make_pipeline, touch
 API_KEY = "secret"
 SERIES = [
     {"id": 1, "title": "Attack on Titan", "year": 2013, "path": "/tv/Attack on Titan (2013)", "seriesType": "anime",
-     "titleSlug": "attack-on-titan", "tags": [1, 2], "status": "continuing", "ratings": {"votes": 1234, "value": 8.6}, "seasons": [
+     "titleSlug": "attack-on-titan", "tags": [1, 2], "status": "continuing",
+     "ratings": {"votes": 1234, "value": 8.6}, "seasons": [
          {"seasonNumber": 1, "statistics": {"previousAiring": "2013-09-28T15:00:00Z"}},
          {"seasonNumber": 2, "statistics": {"previousAiring": "2017-06-17T15:00:00Z",
                                             "nextAiring": "2099-01-07T15:00:00Z"}}]},
@@ -30,13 +31,15 @@ SERIES = [
 CALENDAR = [{"seriesId": 1, "seasonNumber": 2, "episodeNumber": 9, "airDateUtc": "2099-01-07T15:00:00Z"},
             {"seriesId": 1, "seasonNumber": 2, "episodeNumber": 10, "airDateUtc": "2099-01-14T15:00:00Z"}]
 CALENDAR_QUERIES: list[dict] = []
+SERIES_REQUESTS: list = []  # one entry per request for the series list
 FILES = {
     1: [
         {"id": 11, "path": "/tv/Attack on Titan (2013)/Season 01/AoT - S01E01.mkv", "seasonNumber": 1, "size": 100,
          "mediaInfo": {"audioLanguages": "Japanese/English", "audioStreamCount": 2, "audioCodec": "FLAC"}},
         {"id": 12, "path": "/tv/Attack on Titan (2013)/Season 02/AoT - S02E01.mkv", "seasonNumber": 2, "size": 100,
          "mediaInfo": {"audioLanguages": "jpn", "audioStreamCount": 1}},
-        {"id": 13, "path": "/tv/Attack on Titan (2013)/Season 02/AoT - S02E02 [jpn].mkv", "seasonNumber": 2, "size": 100,
+        {"id": 13, "path": "/tv/Attack on Titan (2013)/Season 02/AoT - S02E02 [jpn].mkv", "seasonNumber": 2,
+         "size": 100,
          "mediaInfo": None},
     ],
     2: [{"path": "/tv/Friends/Season 01/Friends - S01E01.mkv", "seasonNumber": 1, "size": 1,
@@ -74,6 +77,7 @@ class MockSonarr(BaseHTTPRequestHandler):
         if route == "/api/v3/system/status":
             return self._send(200, {"version": "4.0.9.2244"})
         if route == "/api/v3/series":
+            SERIES_REQUESTS.append(1)
             return self._send(200, SERIES)
         if route == "/api/v3/episodefile":
             return self._send(200, FILES.get(int(parse_qs(parsed.query)["seriesId"][0]), []))
@@ -199,9 +203,20 @@ class ServerTests(unittest.TestCase):
         log: list = []
         prober = FakeProber(log)
         config.setdefault("air_status_source", "off")  # the air status steps have their own tests
-        pipeline, _ = make_pipeline(self.data, self.cache, prober, FakeLookup(log), config=Config(**{"anilist_ratings": False, **config}))
+        pipeline, _ = make_pipeline(self.data, self.cache, prober, FakeLookup(log),
+                                    config=Config(**{"anilist_ratings": False, **config}))
         outcome = pipeline.run(sonarr=SonarrClient(self.url, API_KEY))
         return outcome, prober, log, {r.key: r for r in outcome.results}
+
+    def test_the_series_list_is_asked_for_once_a_scan(self) -> None:
+        # It's big for a big library, so a scan asks for it once, whatever needs it.
+        SERIES_REQUESTS.clear()
+        outcome, *_ = self.scan(air_status_source="sonarr", dub_grace_days=21, anilist_ratings=True)
+        self.assertIsNone(outcome.error)
+        self.assertEqual(len(SERIES_REQUESTS), 1)
+        SERIES_REQUESTS.clear()
+        self.scan(air_status_source="sonarr")  # the next scan asks again: shows may have been added
+        self.assertEqual(len(SERIES_REQUESTS), 1)
 
     def test_scan_with_path_mapping(self) -> None:
         local = Path(self._tmp.name) / "nas" / "tv"
@@ -252,7 +267,8 @@ class ServerTests(unittest.TestCase):
     def test_series_is_found_by_folder_then_title(self) -> None:
         client = SonarrClient(self.url, API_KEY)
         self.assertEqual(client.find_series("Attack on Titan (2013)").id, 1)
-        self.assertEqual(client.find_series("My AoT folder", "Attack on Titan").id, 1)  # a local folder named differently
+        # A local folder named differently is found by its title.
+        self.assertEqual(client.find_series("My AoT folder", "Attack on Titan").id, 1)
         self.assertIsNone(client.find_series("Unknown Show", "Unknown Show"))
         with self.assertRaisesRegex(SonarrError, "Couldn't find"):
             search_for_replacements(client, "Unknown Show", "Unknown Show", [1], ["x.mkv"])
@@ -343,6 +359,91 @@ class OpenInSonarrWindowTests(unittest.TestCase):
         with mock.patch("dubchecker.gui.messagebox.showerror") as error:
             self.assertEqual(self.open_from_menu(), [])
         self.assertIn("Couldn't find", error.call_args.args[1])
+
+
+class FetchOrderTests(unittest.TestCase):
+    """Series' episode files are asked of Sonarr one series at a time, in order."""
+
+    def test_one_at_a_time_in_order(self) -> None:
+        import time
+
+        from dubchecker.sonarr import SonarrSeries
+        from tests.fakes import FakeLookup, FakeProber, make_pipeline
+
+        class SlowSonarr:
+            url = "http://sonarr"
+
+            def __init__(self) -> None:
+                self.lock = threading.Lock()
+                self.running = self.most = 0
+
+            def series(self):
+                return [SonarrSeries(i, f"Show {i:02}", None, f"/tv/Show {i:02}", "anime") for i in range(12)]
+
+            def episode_files(self, series_id):
+                with self.lock:
+                    self.running += 1
+                    self.most = max(self.most, self.running)
+                time.sleep(0.01)
+                with self.lock:
+                    self.running -= 1
+                return [{"id": series_id, "seasonNumber": 1, "path": f"/tv/Show {series_id:02}/e1.mkv", "size": 1,
+                         "mediaInfo": {"audioLanguages": "jpn/eng", "audioStreamCount": 2}}]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Cache(Path(tmp) / "cache.db")
+            try:
+                sonarr = SlowSonarr()
+                pipeline, events = make_pipeline(Path(tmp), cache, FakeProber([]), FakeLookup([]))
+                outcome = pipeline.run(sonarr=sonarr)
+            finally:
+                cache.close()
+        self.assertEqual(sonarr.most, 1)
+        self.assertEqual([r.group.folder_name for r in outcome.results], [f"Show {i:02}" for i in range(12)])
+        progress = [e[1] for e in events if e[0] == "progress" and e[1].startswith("Getting episode files")]
+        self.assertEqual([p.rsplit(" - ", 1)[1] for p in progress], [f"Show {i:02}" for i in range(12)])
+
+
+class ErrorDetailTests(unittest.TestCase):
+    """When Sonarr refuses something, its own explanation is shown, not just the HTTP status."""
+
+    class Answer:
+        def __init__(self, status: int, body: object = None, text: str = "") -> None:
+            self.status_code = status
+            self.text = text if body is None else json.dumps(body)
+            self.content = self.text.encode()
+
+        def json(self) -> object:
+            return json.loads(self.text)
+
+    def error(self, answer) -> str:
+        class Session:
+            def request(self, *_args, **_kwargs):
+                return answer
+        with self.assertRaises(SonarrError) as caught:
+            SonarrClient("http://sonarr", "key", session=Session()).delete_episode_files([1])
+        return str(caught.exception)
+
+    def test_sonarrs_message(self) -> None:
+        self.assertEqual(self.error(self.Answer(500, {"message": "Access to the path '/tv/x.mkv' is denied.",
+                                                     "description": "System.UnauthorizedAccessException\n  at ..."})),
+                         "Sonarr answered with an error (HTTP 500): Access to the path '/tv/x.mkv' is denied.")
+
+    def test_rejected_fields(self) -> None:
+        body = [{"propertyName": "Path", "errorMessage": "Path is required"},
+                {"propertyName": "QualityProfileId", "errorMessage": "Must be greater than 0"}]
+        self.assertEqual(self.error(self.Answer(400, body)),
+                         "Sonarr answered with an error (HTTP 400): Path is required; Must be greater than 0")
+
+    def test_nothing_readable(self) -> None:
+        for answer in (self.Answer(502, text="<html><body>Bad gateway</body></html>"), self.Answer(500, text=""),
+                       self.Answer(500, {"description": "only a stack trace"})):
+            self.assertEqual(self.error(answer), f"Sonarr answered with an error (HTTP {answer.status_code}).")
+
+    def test_long_messages_are_cut(self) -> None:
+        message = self.error(self.Answer(500, {"message": "word " * 200}))
+        self.assertLess(len(message), 360)
+        self.assertTrue(message.endswith("..."))
 
 
 if __name__ == "__main__":

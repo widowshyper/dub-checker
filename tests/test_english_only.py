@@ -113,7 +113,8 @@ class WindowTests(unittest.TestCase):
         import time
         beta = [self.app.model.results["Beta|S1"]]
         with mock.patch("dubchecker.gui.messagebox.askyesno", return_value=True) as ask, \
-                mock.patch("dubchecker.gui.search_for_replacements", return_value="Sonarr is searching.") as search:
+                mock.patch("dubchecker.sonarr_actions.search_for_replacements",
+                           return_value="Sonarr is searching.") as search:
             self.app.search_sonarr(beta, english=True)
             for thread in self.app.helpers:
                 thread.join(5)

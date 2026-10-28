@@ -56,11 +56,17 @@ class FolderLister:
     def __init__(self) -> None:
         self.folders_listed = 0
         self.seconds = 0.0
+        self.failures = 0  # folders or entries that couldn't be listed: the listing may be incomplete
 
     def __call__(self, path: str) -> FolderListing:
         started = time.monotonic()
         listing = FolderListing()
-        with os.scandir(path) as entries:
+        try:
+            entries = os.scandir(path)
+        except OSError:
+            self.failures += 1
+            raise
+        with entries:
             for entry in entries:
                 try:
                     if _is_hidden(entry):
@@ -71,6 +77,7 @@ class FolderLister:
                         st = entry.stat()
                         listing.files.append(VideoFile(entry.path, st.st_size, st.st_mtime))
                 except OSError as exc:
+                    self.failures += 1
                     log.warning("Skipping %s: %s", entry.path, exc)
         listing.files.sort(key=lambda f: natural_key(f.name))
         listing.folders.sort(key=lambda item: natural_key(item[0]))

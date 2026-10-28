@@ -126,6 +126,11 @@ class DubLookup:
         return LookupResult(outcome.match, english_cast_listed(outcome.details),
                             self.maldubs.status(outcome.match.mal_id), notes)
 
+    def prefetch(self, seasons: list[tuple[ShowGroup, int | None]], say: Callable[[str], None] | None = None) -> None:
+        """Ask AniList about many seasons at once before they're looked up one by one (see
+        ``AniListMatcher.prefetch``)."""
+        self.matcher.prefetch(seasons, say)
+
     def aired_episodes(self, anilist_id: int) -> dict[int, int]:
         """Episode number -> when it first aired, from AniList's airing schedule."""
         return self.matcher.client.aired_episodes(anilist_id)

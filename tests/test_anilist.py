@@ -244,5 +244,136 @@ class ClientTests(unittest.TestCase):
             client.search("Anything")
 
 
+class FakeAniList:
+    """Answers AniList queries the way AniList does: single or several at once (aliased s0, s1... searches and
+    m0, m1... details). A batch with an ID AniList doesn't have comes back as a 404 with no data at all."""
+
+    def __init__(self, searches: dict[str, list[dict]], items: list[dict]) -> None:
+        self.searches = searches
+        self.items = {m["id"]: m for m in items}
+        self.posts: list[dict] = []
+
+    def post(self, _url, json=None, **_kwargs) -> FakeResponse:  # noqa: A002
+        variables = json["variables"]
+        self.posts.append(variables)
+        headers: dict = {}  # no rate limit headers, so the tests aren't paced
+        if "s" in variables:
+            return FakeResponse(200, {"data": {"Page": {"media": self.searches.get(variables["s"], [])}}}, headers)
+        if "id" in variables:
+            item = self.items.get(variables["id"])
+            return FakeResponse(200 if item else 404, {"data": {"Media": item}}, headers)
+        data = {}
+        for name, value in variables.items():
+            if name.startswith("s"):
+                data[name] = {"media": self.searches.get(value, [])}
+            elif value in self.items:
+                data["m" + name[1:]] = self.items[value]
+            else:
+                return FakeResponse(404, {"errors": [{"status": 404}], "data": None}, headers)
+        return FakeResponse(200, {"data": data}, headers)
+
+
+class BatchTests(unittest.TestCase):
+    """Asking AniList about many seasons in a few batched requests gives the same matches as one by one."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)  # after the caches close
+        s2 = media(102, "Kyojin Season 2", "Titan Season 2", 2017)
+        s3 = media(103, "Kyojin Season 3", "Titan Season 3", 2018)
+        s2["relations"] = {"edges": [{"relationType": "SEQUEL", "node": s3}]}
+        aot = media(101, "Shingeki no Kyojin", "Titan", 2013, relations=[("SEQUEL", s2)], voice_actors=True)
+        shows = [media(200 + n, f"Show {n}", year=2020, voice_actors=n % 2 == 0) for n in range(14)]
+        self.searches = {"Titan": [aot, s2], "Titan Season 3": [s3, aot], "Big Title: The Movie": [],
+                         "Big Title": [media(300, "Big Title", year=2001)]}
+        self.searches.update({f"Show {n}": [shows[n]] for n in range(14)})
+        self.items = [aot, s2, s3, media(300, "Big Title", year=2001), *shows]
+        self.seasons = [(group("Titan", 1), None), (group("Titan", 3), None), (group("Big Title: The Movie"), None),
+                        (group("Mine"), 300), *[(group(f"Show {n}"), None) for n in range(14)]]
+
+    def matcher(self, name: str) -> tuple[AniListMatcher, FakeAniList, Cache]:
+        cache = Cache(Path(self._tmp.name) / f"{name}.db")
+        server = FakeAniList(self.searches, self.items)
+        self.addCleanup(cache.close)
+        return AniListMatcher(AniListClient(cache, min_interval=0, session=server), 80), server, cache
+
+    def test_same_matches_in_far_fewer_requests(self) -> None:
+        one_by_one, slow_server, _ = self.matcher("slow")
+        expected = [one_by_one.find(g, override) for g, override in self.seasons]
+
+        batched, server, _ = self.matcher("fast")
+        messages: list[str] = []
+        batched.prefetch(self.seasons, messages.append)
+        asked = len(server.posts)
+        found = [batched.find(g, override) for g, override in self.seasons]
+        self.assertEqual([o.match for o in found], [o.match for o in expected])
+        self.assertEqual([english_cast_listed(o.details) for o in found],
+                         [english_cast_listed(o.details) for o in expected])
+        self.assertEqual(len(server.posts), asked)  # everything was already saved
+        self.assertLess(asked, len(slow_server.posts) / 4)
+        self.assertEqual(found[1].match.anilist_id, 103)  # season 3, by the sequel list
+        self.assertEqual(found[2].match.anilist_id, 300)  # by the part before the subtitle
+        self.assertTrue(any("10 at a time" in m for m in messages))
+
+    def test_an_id_anilist_doesnt_have_is_asked_alone(self) -> None:
+        matcher, server, _ = self.matcher("missing")
+        matcher.prefetch([(group("Show 0"), None), (group("Gone"), 999), (group("Mine"), 300)])
+        self.assertIsNone(matcher.client.peek_details(300))  # its batch came back empty
+        outcome = matcher.find(group("Gone"), 999)
+        self.assertIsNone(outcome.match)
+        self.assertEqual(matcher.find(group("Mine"), 300).match.anilist_id, 300)
+
+    def test_a_failed_batch_leaves_it_to_the_lookups(self) -> None:
+        cache = Cache(Path(self._tmp.name) / "fail.db")
+        self.addCleanup(cache.close)
+        client = AniListClient(cache, min_interval=0, session=FakeSession([FakeResponse(400)]))
+        client.prefetch_searches(["Show 1", "Show 2"])  # no exception
+        self.assertIsNone(client.peek_search("Show 1"))
+
+
+class PacingTests(unittest.TestCase):
+    def test_paced_by_the_limit_anilist_reports(self) -> None:
+        client = AniListClient(None, min_interval=2.1, session=object())
+        self.assertEqual(client.interval(), 2.1)
+        for limit, expected in (("90", 0.7), ("30", 2.1)):
+            client._respect_rate_headers(FakeResponse(200, headers={"X-RateLimit-Limit": limit}))
+            self.assertAlmostEqual(client.interval(), expected)
+        slow = AniListClient(None, min_interval=5, session=object())  # chosen in config.json: kept
+        slow._respect_rate_headers(FakeResponse(200, headers={"X-RateLimit-Limit": "90"}))
+        self.assertEqual(slow.interval(), 5)
+
+
+class ScanBatchTests(unittest.TestCase):
+    """A scan asks AniList about all the seasons it needs in batches first, then looks them up one by one."""
+
+    def test_prefetch_before_the_lookups(self) -> None:
+        from dubchecker.config import Config
+        from tests.fakes import FakeLookup, FakeProber, make_pipeline, touch
+
+        class BatchingLookup(FakeLookup):
+            def prefetch(self, seasons, say=None) -> None:
+                self.log.append(("prefetch", sorted(g.key for g, _ in seasons)))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            for show in ("Alpha", "Beta", "Gamma"):
+                touch(base / "Anime" / show / "Season 01" / "e1 [jpn].mkv")
+            touch(base / "Anime" / "Delta" / "Season 01" / "e1 [dual].mkv")
+            cache = Cache(base / "cache.db")
+            try:
+                log: list = []
+                pipeline, _ = make_pipeline(base, cache, FakeProber(log), BatchingLookup(log),
+                                            config=Config(probe_workers=1, air_status_source="anilist",
+                                                          anilist_ratings=False))
+                pipeline.run(root=str(base / "Anime"))
+            finally:
+                cache.close()
+        steps = [entry for entry in log if entry[0] != "read"]
+        self.assertEqual(steps[0], ("prefetch", ["Alpha|S1", "Beta|S1", "Gamma|S1"]))
+        self.assertEqual([s[0] for s in steps[1:4]], ["lookup"] * 3)
+        # Delta was decided from its files; the air status step looks it up (alone, so no batch).
+        self.assertEqual(steps[4:], [("lookup", "Delta|S1")])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,10 +2,12 @@
 
 MediaInfo (via pymediainfo) is used first and only reads the file headers.
 If MediaInfo isn't available, ffprobe is used instead; it is looked for in
-``UserData/bin``, then on PATH, and finally downloaded into ``UserData/bin``.
+``UserData/bin``, then on PATH, and finally downloaded into ``UserData/bin`` - only
+from a source that publishes a checksum, which the download must match before it's run.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -20,6 +22,7 @@ import tarfile
 import tempfile
 import threading
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -123,35 +126,49 @@ def _unavailable_message() -> str:
         how = "Install MediaInfo or FFmpeg (for example:  brew install ffmpeg)"
     else:
         how = "Install MediaInfo from https://mediaarea.net or FFmpeg from https://ffmpeg.org"
+    why = ("ffprobe couldn't be downloaded and checked (check your internet connection)" if ffprobe_sources()
+           else "there's no ffprobe download for this computer that Dub Checker can check")
     return ("Dub Checker couldn't find a way to read your video files.\n\n"
-            "MediaInfo isn't available and ffprobe couldn't be downloaded (check your internet connection).\n\n"
+            f"MediaInfo isn't available, and {why}.\n\n"
             f"{how}, or put ffprobe into the UserData\\bin folder, then scan again.")
 
 
 # ---------------------------------------------------------------- ffprobe download
 
-FFBINARIES_API = "https://ffbinaries.com/api/v1/version/latest"
 GYAN_ZIP = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-EVERMEET_ZIP = "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"
 JOHNVANSICKLE_TAR = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+
+
+@dataclass(frozen=True)
+class FfprobeSource:
+    """A download holding ffprobe, and the checksum its site publishes next to it."""
+    url: str
+    checksum_url: str
+    algorithm: str  # "sha256" or "md5"
+
+
+def ffprobe_sources() -> list[FfprobeSource]:
+    """Where ffprobe can be downloaded for this computer, checked against a published checksum. Sources
+    that publish none aren't used: a downloaded program is run, so it has to be the one the site put
+    there. (For macOS and other Linux machines, ffprobe is installed with brew or apt instead.)"""
+    if os.name == "nt":
+        return [FfprobeSource(GYAN_ZIP, GYAN_ZIP + ".sha256", "sha256")]
+    if sys.platform.startswith("linux") and platform.machine().lower() in ("x86_64", "amd64"):
+        return [FfprobeSource(JOHNVANSICKLE_TAR, JOHNVANSICKLE_TAR + ".md5", "md5")]
+    return []
+
+
+def published_checksum(text: str, algorithm: str) -> str:
+    """The checksum in a ``.sha256``/``.md5`` file: ``<hex>`` or ``<hex>  <file name>``."""
+    length = {"sha256": 64, "md5": 32}[algorithm]
+    match = re.match(rf"\s*([0-9a-fA-F]{{{length}}})(?![0-9a-fA-F])", text or "")
+    if not match:
+        raise ProbeError(f"The published {algorithm} checksum couldn't be read")
+    return match.group(1).lower()
 
 
 def ffprobe_name() -> str:
     return "ffprobe.exe" if os.name == "nt" else "ffprobe"
-
-
-def ffbinaries_platform() -> str:
-    machine = platform.machine().lower()
-    bits = 64 if sys.maxsize > 2 ** 32 else 32
-    if os.name == "nt":
-        return f"windows-{bits}"
-    if sys.platform == "darwin":
-        return "osx-64"
-    if machine in ("aarch64", "arm64"):
-        return "linux-arm64"
-    if machine.startswith("arm"):
-        return "linux-armhf"
-    return f"linux-{bits}"
 
 
 def find_ffprobe(bin_dir: Path) -> str | None:
@@ -204,28 +221,22 @@ def _extract_member(archive: bytes, name: str, target: Path) -> None:
 
 def download_ffprobe(bin_dir: Path, status: StatusCallback | None = None,
                      cancel: threading.Event | None = None) -> str:
-    """Download ffprobe into ``bin_dir``, trying several sources. Returns its path."""
+    """Download ffprobe into ``bin_dir``, and check it against its published checksum before it's saved or
+    run. Returns its path."""
     import requests
     target = bin_dir / ffprobe_name()
-    sources: list[Callable[[], str]] = []
-
-    def from_ffbinaries() -> str:
-        info = requests.get(FFBINARIES_API, timeout=30).json()
-        return info["bin"][ffbinaries_platform()]["ffprobe"]
-
-    sources.append(from_ffbinaries)
-    if os.name == "nt":
-        sources.append(lambda: GYAN_ZIP)
-    elif sys.platform == "darwin":
-        sources.append(lambda: EVERMEET_ZIP)
-    elif platform.machine().lower() in ("x86_64", "amd64"):
-        sources.append(lambda: JOHNVANSICKLE_TAR)
-
-    for source in sources:
+    for source in ffprobe_sources():
         try:
-            url = source()
-            log.info("Downloading ffprobe from %s", url)
-            _extract_member(_download(url, status, cancel), ffprobe_name(), target)
+            response = requests.get(source.checksum_url, timeout=30, headers={"User-Agent": "DubChecker"})
+            response.raise_for_status()
+            expected = published_checksum(response.text, source.algorithm)
+            log.info("Downloading ffprobe from %s", source.url)
+            archive = _download(source.url, status, cancel)
+            actual = hashlib.new(source.algorithm, archive).hexdigest()
+            if actual != expected:
+                raise ProbeError(f"The download doesn't match its published {source.algorithm} checksum "
+                                 f"(expected {expected}, got {actual})")
+            _extract_member(archive, ffprobe_name(), target)
             subprocess.run([str(target), "-version"], capture_output=True, timeout=30, check=True,
                            creationflags=_NO_WINDOW)
             log.info("ffprobe saved to %s", target)

@@ -56,6 +56,19 @@ class Cache:
                                    "VALUES (?, ?, ?, ?, ?)", data)
             self._conn.commit()
 
+    def prune_files(self, prefix: str, keep: set[str]) -> int:
+        """Forget the files under a folder (``prefix``: its key, ending in a separator) that aren't in
+        ``keep``: ones deleted or moved since they were read. Returns how many."""
+        with self._lock:
+            rows = self._conn.execute("SELECT path FROM files WHERE substr(path, 1, ?) = ?",
+                                      (len(prefix), prefix)).fetchall()
+        gone = [(path,) for (path,) in rows if path not in keep]
+        if gone:
+            with self._lock:
+                self._conn.executemany("DELETE FROM files WHERE path = ?", gone)
+                self._conn.commit()
+        return len(gone)
+
     def file_count(self) -> int:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
@@ -84,6 +97,14 @@ class Cache:
             self._conn.execute("INSERT OR REPLACE INTO anilist (key, response, fetched_at) VALUES (?, ?, ?)",
                                (key, json.dumps(response, ensure_ascii=False), time.time()))
             self._conn.commit()
+
+    def prune_anilist(self, max_age_days: float) -> int:
+        """Forget AniList answers older than ``max_age_days``: they're never used again. Returns how many."""
+        with self._lock:
+            count = self._conn.execute("DELETE FROM anilist WHERE fetched_at < ?",
+                                       (time.time() - max_age_days * 86400,)).rowcount
+            self._conn.commit()
+        return count
 
     def clear_anilist(self) -> int:
         with self._lock:

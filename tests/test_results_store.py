@@ -93,5 +93,57 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(ui.shared_folder([]), "")
 
 
+class BackgroundSaveTests(unittest.TestCase):
+    """The results file is written on a thread of its own, newest request first, and closing waits for it."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "last_scan.json"
+
+    def test_saves_then_deletes_in_order(self) -> None:
+        from dubchecker.results_store import ResultsSaver
+        saver = ResultsSaver(self.path)
+        saver.save(SavedScan(sample_results()))
+        self.assertTrue(saver.flush())
+        self.assertEqual(len(load_scan(self.path).results), len(sample_results()))
+        saver.save(None)
+        self.assertTrue(saver.flush())
+        self.assertFalse(self.path.exists())
+
+    def test_only_the_newest_request_is_written(self) -> None:
+        import threading
+
+        from dubchecker import results_store
+        from dubchecker.results_store import ResultsSaver
+        started, release, written = threading.Event(), threading.Event(), []
+        real_save = results_store.save_scan
+
+        def slow_save(path, scan) -> None:
+            started.set()
+            release.wait(5)
+            written.append(len(scan.results))
+            real_save(path, scan)
+
+        saver = ResultsSaver(self.path)
+        with mock.patch.object(results_store, "save_scan", slow_save):
+            saver.save(SavedScan(sample_results()[:1]))
+            started.wait(5)  # the first is being written...
+            saver.save(SavedScan(sample_results()[:2]))  # ...these two arrive meanwhile:
+            saver.save(SavedScan(sample_results()))      # only the newest is written after it
+            self.assertFalse(saver.flush(timeout=0.05))  # still busy
+            release.set()
+            self.assertTrue(saver.flush())
+        self.assertEqual(written, [1, len(sample_results())])
+        self.assertEqual(len(load_scan(self.path).results), len(sample_results()))
+
+    def test_a_failed_save_is_logged_not_raised(self) -> None:
+        from dubchecker.results_store import ResultsSaver
+        saver = ResultsSaver(self.path / "not a folder" / "x.json")
+        with self.assertLogs("dubchecker.results_store", "WARNING"):
+            saver.save(SavedScan(sample_results()))
+            self.assertTrue(saver.flush())
+
+
 if __name__ == "__main__":
     unittest.main()

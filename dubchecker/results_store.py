@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -135,3 +136,52 @@ def delete_scan(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError as exc:
         log.warning("Couldn't delete %s: %s", path, exc)
+
+
+_NOTHING = object()
+
+
+class ResultsSaver:
+    """Saves (or deletes) the results file on a thread of its own: for a big library writing it takes a
+    noticeable moment, which shouldn't pause the window. Only the newest request matters, so requests made
+    while one is being written replace each other. ``flush`` waits until everything asked for is done."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._cond = threading.Condition()
+        self._pending: object = _NOTHING  # a SavedScan to save, None to delete the file
+        self._busy = False
+        self._thread: threading.Thread | None = None
+
+    def save(self, scan: SavedScan | None) -> None:
+        """Save ``scan``, or delete the file for None."""
+        with self._cond:
+            self._pending = scan
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, name="results-saver", daemon=True)
+                self._thread.start()
+            self._cond.notify_all()
+
+    def flush(self, timeout: float = 30.0) -> bool:
+        """Wait for the newest request to be written. False if it took longer than ``timeout``."""
+        with self._cond:
+            return self._cond.wait_for(lambda: self._pending is _NOTHING and not self._busy, timeout)
+
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                if not self._cond.wait_for(lambda: self._pending is not _NOTHING, timeout=60):
+                    self._thread = None  # nothing to do for a minute: let the thread end
+                    return
+                job, self._pending, self._busy = self._pending, _NOTHING, True
+            try:
+                if job is None:
+                    delete_scan(self.path)
+                else:
+                    save_scan(self.path, job)  # type: ignore[arg-type]
+            except Exception as exc:  # e.g. the disk is full; the results stay on screen
+                log.warning("Couldn't save the results: %s", exc)
+            finally:
+                with self._cond:
+                    self._busy = False
+                    self._cond.notify_all()

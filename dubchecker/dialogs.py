@@ -15,7 +15,7 @@ from urllib.parse import quote
 from dubchecker import APP_NAME, __version__, dpapi, glass, theme
 from dubchecker import ui_common as ui
 from dubchecker.anilist import parse_anilist_id
-from dubchecker.models import FileStatus, ShowResult
+from dubchecker.models import FileStatus, ShowResult, size_text
 from dubchecker.sonarr import (DELETE_FILES, DELETE_FILES_UNMONITOR, DELETE_SHOW, DeleteTarget, SonarrClient,
                                SonarrError, connection_summary)
 
@@ -110,7 +110,7 @@ class EpisodeDetailsDialog(Dialog):
             rows.append(("AniList:", ui.anilist_text(result)))
         rows.append(("Match:", ui.match_info_text(result)))
         rows.append(("Rating:", ui.rating_detail(result)))
-        rows.append(("Size:", f"{ui.size_text(result.size)} on disk, {ui.plural(result.episodes, 'episode')}"))
+        rows.append(("Size:", f"{size_text(result.size)} on disk, {ui.plural(result.episodes, 'episode')}"))
         rows.append(("English dub:", ui.dub_status_text(result)))
         if result.notes:
             rows.append(("Notes:", ui.notes_text(result)))
@@ -324,7 +324,7 @@ class DeleteDialog(Dialog):
             self.whole_size += sum(s.size for s in shows.get(target.folder_name, []))
             seasons = "" if target.seasons is None else " (" + ", ".join(
                 by_key[k].group.season_label for k in keys if k in by_key) + ")"
-            names.insert("end", f"  {target.title}{seasons}  -  {ui.size_text(size)}")
+            names.insert("end", f"  {target.title}{seasons}  -  {size_text(size)}")
 
         self.choice = tk.StringVar(value="")
         choices = ttk.Frame(frame)
@@ -353,8 +353,8 @@ class DeleteDialog(Dialog):
         action = self.choice.get()
         self.delete_button.state(("!disabled",) if action else ("disabled",))
         size = self.whole_size if action == DELETE_SHOW else self.picked_size
-        self.space.configure(text=f"Frees about {ui.size_text(size)}" if action and size
-                             else f"Selected: {ui.size_text(self.picked_size)}")
+        self.space.configure(text=f"Frees about {size_text(size)}" if action and size
+                             else f"Selected: {size_text(self.picked_size)}")
 
     def _delete(self) -> None:
         action = self.choice.get()

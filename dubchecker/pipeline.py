@@ -26,8 +26,8 @@ from dubchecker.media_probe import ProbeUnavailable, build_file_result
 from dubchecker.models import (Cancelled, Category, FileResult, FileStatus, Rating, ShowGroup, ShowResult, VideoFile,
                                season_key, air_from_match, season_sort_key, strip_id_tags)
 from dubchecker.scanner import FolderLister, episode_number, group_show, is_network_path, list_library, natural_key
-from dubchecker.sonarr import (SeriesIndex, SonarrAirStatus, SonarrClient, SonarrError, aired_by_file, last_path_part,
-                              map_path, tracks_from_media_info)
+from dubchecker.sonarr import (SeriesIndex, SonarrAirStatus, SonarrClient, SonarrError, SonarrSeries, aired_by_file,
+                              last_path_part, map_path, tracks_from_media_info)
 
 log = logging.getLogger(__name__)
 
@@ -224,6 +224,7 @@ class ScanPipeline:
         self._stats_lock = threading.Lock()
         self.air_client: SonarrClient | None = None
         self.only: frozenset[str] | None = None  # show folder names to scan; None = every show
+        self._series: dict[str, list[SonarrSeries]] = {}  # Sonarr's series list, by its address: once a scan
 
     # ------------------------------------------------------------ helpers
 
@@ -245,6 +246,13 @@ class ScanPipeline:
     def _key(path: str) -> str:
         return to_portable(path)
 
+    def _sonarr_series(self, client: SonarrClient) -> list[SonarrSeries]:
+        """Sonarr's series list. Several steps need it; it's big for a big library, so it's asked for once
+        a scan."""
+        if client.url not in self._series:
+            self._series[client.url] = client.series()
+        return list(self._series[client.url])
+
     def _workers(self) -> int:
         if self.stats.network and self.config.network_workers_enabled:
             return self.config.network_workers
@@ -265,6 +273,7 @@ class ScanPipeline:
         self.air_client = air_client or sonarr
         self.dates_client = dates_client or self.air_client
         self.only = frozenset(only) if only is not None else None
+        self._series = {}
         started = time.monotonic()
         outcome = ScanOutcome(stats=self.stats)
         try:
@@ -335,6 +344,8 @@ class ScanPipeline:
                 for number, (label, groups) in enumerate(show_groups, 1) for g in groups for f in g.files]
         self.stats.files = len(jobs)
         read = self._read_all(jobs, len(show_groups))
+        if self.only is None and not self.stopped and lister.failures == 0:
+            self._forget_missing_files(root, jobs)
         seasons = []
         for _, groups in show_groups:
             for g in groups:
@@ -342,6 +353,17 @@ class ScanPipeline:
                 if files:  # seasons with nothing read yet (Stop) are left out
                     seasons.append(SeasonFiles(g, files, complete=len(files) == len(g.files)))
         return seasons
+
+    def _forget_missing_files(self, root: str, jobs: list[ReadJob]) -> None:
+        """After a complete scan of a library folder, its saved files that weren't found have been deleted or
+        moved: forget them, so the cache doesn't keep growing. Not for the root of the app's own drive,
+        whose key (a lone separator) would also take in other drives' files."""
+        prefix = self._key(os.path.join(root, ""))
+        if not prefix.strip("\\/"):
+            return
+        gone = self.cache.prune_files(prefix, {self._key(j.file.path) for j in jobs})
+        if gone:
+            log.info("Forgot %d saved files that are no longer in %s", gone, root)
 
     # ------------------------------------------------------------ phase 1: Sonarr
 
@@ -352,7 +374,7 @@ class ScanPipeline:
                    + ("Files Sonarr couldn't label are read by Dub Checker itself."
                       if cfg.sonarr_read_unknown else "Files Sonarr couldn't label go to Check Manually."))
         self.progress("Connecting to Sonarr and getting your series list...", busy=True)
-        series = client.series()
+        series = self._sonarr_series(client)
         if cfg.sonarr_anime_only:
             series = [s for s in series if s.series_type == "anime"]
         if self.only is not None:
@@ -362,57 +384,66 @@ class ScanPipeline:
         groups: dict[str, ShowGroup] = {}
         files_by_key: dict[str, list[FileResult]] = {}
         jobs: list[ReadJob] = []
-        unreachable, example = 0, ""
+        unreachable: list[str] = []  # files to read that can't be opened from this PC
         for number, s in enumerate(series, 1):
             self._check_cancel()
             self.progress(f"Getting episode files from Sonarr: series {number} of {len(series)} - {s.title}",
                           (number - 1) / max(1, len(series)))
-            folder = last_path_part(s.path) or s.title
-            local_series_path = map_path(s.path, cfg.sonarr_path_from, cfg.sonarr_path_to)
-            reachable: bool | None = None
-            episode_files = sorted(client.episode_files(s.id), key=lambda e: (
-                season_sort_key(e.get("seasonNumber")), natural_key(str(e.get("path") or ""))))
-            for ef in episode_files:
-                season = ef.get("seasonNumber")
-                key = season_key(folder, season)
-                if key not in groups:
-                    groups[key] = ShowGroup(key, folder, strip_id_tags(s.title), s.year, season)
-                    files_by_key[key] = []
-                path = map_path(str(ef.get("path") or ""), cfg.sonarr_path_from, cfg.sonarr_path_to)
-                size = int(ef.get("size") or 0)
-                raw = tracks_from_media_info(ef.get("mediaInfo"))
-                if raw is None:
-                    result = FileResult(path, size, source="sonarr", note="Sonarr hasn't analysed this file yet")
-                else:
-                    result = build_file_result(path, size, 0.0, raw, cfg.ignore_commentary_tracks, "sonarr")
-                    self.stats.from_sonarr += 1
-                groups[key].files.append(VideoFile(path, size, 0.0))
-                files_by_key[key].append(result)
-
-                if cfg.sonarr_read_unknown and result.status is FileStatus.UNLABELED:
-                    if reachable is None:  # checked once per series
-                        reachable = bool(local_series_path) and os.path.isdir(local_series_path)
-                    try:
-                        if not reachable:
-                            raise OSError
-                        st = os.stat(path)
-                        jobs.append(ReadJob(VideoFile(path, st.st_size, st.st_mtime), number, s.title))
-                    except OSError:
-                        unreachable += 1
-                        example = example or path
+            unreachable += self._add_sonarr_series(s, number, client.episode_files(s.id), groups, files_by_key, jobs)
 
         self.stats.files = sum(len(v) for v in files_by_key.values())
         if unreachable:
             self.warnings.append(
-                f"{unreachable:,} files that Sonarr couldn't label couldn't be opened from this PC, for example:\n"
-                f"{example}\n\nIf Sonarr runs on another computer or in Docker, set up path mapping in "
-                "Settings > Sonarr so Dub Checker can find the files.")
+                f"{len(unreachable):,} files that Sonarr couldn't label couldn't be opened from this PC, for "
+                f"example:\n{unreachable[0]}\n\nIf Sonarr runs on another computer or in Docker, set up path "
+                "mapping in Settings > Sonarr so Dub Checker can find the files.")
         if jobs:
             self.stats.network = is_network_path(jobs[0].file.path)
             read = self._read_all(jobs, len(series))
             for results in files_by_key.values():
                 results[:] = [read.get(f.path, f) for f in results]
         return [SeasonFiles(groups[k], files_by_key[k]) for k in groups]
+
+    def _add_sonarr_series(self, s: SonarrSeries, number: int, episode_files: list[dict],
+                           groups: dict[str, ShowGroup], files_by_key: dict[str, list[FileResult]],
+                           jobs: list[ReadJob]) -> list[str]:
+        """One series' episode files: into seasons, with the files Sonarr couldn't label queued to be read.
+        Returns those of them that can't be opened from this PC."""
+        cfg = self.config
+        folder = last_path_part(s.path) or s.title
+        local_series_path = map_path(s.path, cfg.sonarr_path_from, cfg.sonarr_path_to)
+        reachable: bool | None = None
+        unreachable: list[str] = []
+        episode_files = sorted(episode_files, key=lambda e: (
+            season_sort_key(e.get("seasonNumber")), natural_key(str(e.get("path") or ""))))
+        for ef in episode_files:
+            season = ef.get("seasonNumber")
+            key = season_key(folder, season)
+            if key not in groups:
+                groups[key] = ShowGroup(key, folder, strip_id_tags(s.title), s.year, season)
+                files_by_key[key] = []
+            path = map_path(str(ef.get("path") or ""), cfg.sonarr_path_from, cfg.sonarr_path_to)
+            size = int(ef.get("size") or 0)
+            raw = tracks_from_media_info(ef.get("mediaInfo"))
+            if raw is None:
+                result = FileResult(path, size, source="sonarr", note="Sonarr hasn't analysed this file yet")
+            else:
+                result = build_file_result(path, size, 0.0, raw, cfg.ignore_commentary_tracks, "sonarr")
+                self.stats.from_sonarr += 1
+            groups[key].files.append(VideoFile(path, size, 0.0))
+            files_by_key[key].append(result)
+
+            if cfg.sonarr_read_unknown and result.status is FileStatus.UNLABELED:
+                if reachable is None:  # checked once per series
+                    reachable = bool(local_series_path) and os.path.isdir(local_series_path)
+                try:
+                    if not reachable:
+                        raise OSError
+                    st = os.stat(path)
+                    jobs.append(ReadJob(VideoFile(path, st.st_size, st.st_mtime), number, s.title))
+                except OSError:
+                    unreachable.append(path)
+        return unreachable
 
     # ------------------------------------------------------------ reading
 
@@ -520,8 +551,8 @@ class ScanPipeline:
                        "in your files, so each is looked up on AniList (its English voice cast) and in the MAL-Dubs "
                        "list. " + (f"The other {plural(decided, 'season')} already have dual-audio files, so they "
                                    "skip this. " if decided else "")
-                       + "AniList allows about 28 requests a minute, so a first scan can take a while; answers are "
-                         "saved, so the next scan is quicker.")
+                       + "AniList allows about 30 requests a minute, so Dub Checker asks about several shows in each "
+                         "one; a first scan can still take a while. Answers are saved, so the next scan is quicker.")
         try:
             for number, s in enumerate(pending):
                 if self.cancel.is_set():
@@ -532,6 +563,7 @@ class ScanPipeline:
                         self.progress("Downloading the MAL-Dubs list of dubbed anime (refreshed once a week)...",
                                       busy=True)
                         service = self.lookup_factory()
+                        self._prefetch(service, [(p.group, self.overrides.get(p.group.key)) for p in pending])
                     self.progress(f"Looking up on AniList: season {number + 1} of {len(pending)} - "
                                   f"{s.group.display_title}", number / len(pending))
                     result = evaluate_season(s.group, s.files, service, self.overrides.get(s.group.key),
@@ -554,6 +586,20 @@ class ScanPipeline:
             self.stats.lookup_time = time.monotonic() - started
         return results
 
+    def _prefetch(self, service: LookupService, seasons: list[tuple[ShowGroup, int | None]]) -> None:
+        """Ask AniList about these seasons in batches first (when the service can), so the lookups one by one
+        that follow mostly find saved answers: AniList allows about 30 requests a minute, and one request can
+        ask about several shows. Stop still works; any other problem just leaves the lookups to do the work."""
+        prefetch = getattr(service, "prefetch", None)
+        if prefetch is None or len(seasons) < 2:
+            return
+        try:
+            prefetch(seasons, lambda text: self.progress(text, busy=True))
+        except Cancelled:
+            raise
+        except Exception as exc:
+            log.warning("Asking AniList about several seasons at once failed: %s", exc)
+
     def _add_sonarr_air_status(self, results: list[ShowResult]) -> None:
         """Air status from Sonarr: its series list and calendar, two requests for the whole library.
         Shows are matched by folder name (then title), so this works after a local files scan too."""
@@ -566,7 +612,7 @@ class ScanPipeline:
                    "calendar of upcoming episodes - two quick requests. Groups don't change.")
         self.progress("Asking Sonarr for its series list and upcoming episodes...", busy=True)
         try:
-            sonarr = SonarrAirStatus.fetch(self.air_client)
+            sonarr = SonarrAirStatus.fetch(self.air_client, series=self._sonarr_series(self.air_client))
         except SonarrError as exc:
             self.warnings.append(f"Couldn't get air status from Sonarr: {exc}")
             return
@@ -599,7 +645,7 @@ class ScanPipeline:
         if self.dates_client is not None:
             try:
                 self.progress("Asking Sonarr when the episodes aired...", busy=True)
-                index = SeriesIndex(self.dates_client.series())
+                index = SeriesIndex(self._sonarr_series(self.dates_client))
             except SonarrError as exc:
                 log.warning("Couldn't get series from Sonarr for air dates: %s", exc)
         by_series: dict[int, dict[str, int]] = {}
@@ -672,6 +718,8 @@ class ScanPipeline:
                 if service is None:
                     self.progress("Connecting to AniList...", busy=True)
                     service = self.lookup_factory()
+                if number == 0:
+                    self._prefetch(service, [(results[i].group, None) for i in todo])
                 self.progress(f"{doing}: season {number + 1} of {len(todo)} - {season.group.display_title}",
                               number / len(todo))
                 lookup = service.lookup(season.group)
@@ -695,7 +743,7 @@ class ScanPipeline:
         if self.dates_client is not None:
             self.progress("Getting ratings from Sonarr...", busy=True)
             try:
-                index = SeriesIndex(self.dates_client.series())
+                index = SeriesIndex(self._sonarr_series(self.dates_client))
             except SonarrError as exc:
                 log.warning("Couldn't get ratings from Sonarr: %s", exc)
             else:

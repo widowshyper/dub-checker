@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 3.1.0
+**Version:** 3.2.0
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -92,11 +92,11 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 **Runtime**
 - Python 3.10+ with tkinter. The portable Windows exe bundles its own Python.
 - Python packages: `requests`, `rapidfuzz`, `anitopy`, `pymediainfo`, `sv-ttk`.
-- MediaInfo (bundled in the exe). ffprobe is downloaded only if MediaInfo can't be used.
+- MediaInfo (bundled in the exe). ffprobe is downloaded only if MediaInfo can't be used, from a source that publishes a checksum (gyan.dev SHA-256 on Windows, johnvansickle.com MD5 on 64-bit Linux), and only run once the download matches it.
 - Windows DPAPI to encrypt the Sonarr API key (plain text in a user-only file on macOS/Linux).
 
 **Online services**
-- AniList GraphQL API (rate-limited to about 28 requests a minute; answers are cached).
+- AniList GraphQL API (about 30 requests a minute, paced by the limit AniList reports; searches and details are asked for in batches of 10 and 8 per request; answers are cached).
 - The MAL-Dubs list on GitHub (refreshed weekly).
 - Sonarr API v3 (optional; works with Sonarr v3, v4 and v5).
 - nyaa.si (only opened in the browser; nothing is downloaded).
@@ -112,7 +112,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Build and test**
 - PyInstaller (`build.bat`) produces the portable one-folder app and zip.
-- A unittest suite of 343 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
+- A unittest suite of 371 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
 
 ## Out of scope
 

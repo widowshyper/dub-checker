@@ -89,7 +89,13 @@ def main() -> int:
 
     config_path = data_dir / "config.json"
     cache = Cache(data_dir / "cache.db")
-    ctx = AppContext(Config.load(config_path), config_path, Overrides(data_dir / "overrides.json"), cache, data_dir)
+    config = Config.load(config_path)
+    try:
+        if forgotten := cache.prune_anilist(config.cache_expiry_days):  # too old to be used again
+            log.info("Forgot %d expired AniList answers", forgotten)
+    except Exception as exc:  # a locked or damaged cache shouldn't stop the app opening
+        log.warning("Couldn't tidy the cache: %s", exc)
+    ctx = AppContext(config, config_path, Overrides(data_dir / "overrides.json"), cache, data_dir)
 
     root = tk.Tk()
     root.withdraw()  # build hidden, then show, so the window doesn't flash half-drawn

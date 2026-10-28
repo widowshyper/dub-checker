@@ -7,9 +7,9 @@ from pathlib import Path
 from dubchecker import ui_common as ui
 from dubchecker.cache import Cache
 from dubchecker.config import Config, Overrides
-from dubchecker.models import Category, FileResult, FileStatus, ShowGroup, ShowResult, season_key
-from dubchecker.sonarr import (DELETE_FILES, DELETE_FILES_UNMONITOR, DELETE_SHOW, DeleteTarget, SonarrClient,
-                               delete_from_sonarr)
+from dubchecker.models import Category, FileResult, FileStatus, ShowGroup, ShowResult, season_key, size_text
+from dubchecker.sonarr import (DELETE_FILES, DELETE_FILES_UNMONITOR, DELETE_SHOW, DeleteReport, DeleteTarget,
+                               SonarrClient, delete_from_sonarr)
 
 GB = 1024 ** 3
 SERIES = [{"id": 1, "title": "Attack on Titan", "path": "/tv/Attack on Titan (2013)",
@@ -114,7 +114,7 @@ class DeleteInSonarrTests(unittest.TestCase):
 
 class SizeTests(unittest.TestCase):
     def test_wording(self) -> None:
-        self.assertEqual([ui.size_text(n) for n in (0, 850 * 1024 ** 2, 12_345 * 1024 ** 2, 2048 * GB)],
+        self.assertEqual([size_text(n) for n in (0, 850 * 1024 ** 2, 12_345 * 1024 ** 2, 2048 * GB)],
                          ["-", "850 MB", "12.1 GB", "2,048.0 GB"])
 
     def test_a_season_and_a_show(self) -> None:
@@ -179,8 +179,8 @@ class DeleteWindowTests(unittest.TestCase):
         self.root = tk.Tk()
         self.root.withdraw()
         self.app = App(self.root, ctx)
-        for r, size in ((season("AoT", 1, "Attack on Titan"), 2 * GB), (season("AoT", 2, "Attack on Titan"), 5 * GB // 2),
-                        (season("Lain", None), GB)):
+        for r, size in ((season("AoT", 1, "Attack on Titan"), 2 * GB),
+                        (season("AoT", 2, "Attack on Titan"), 5 * GB // 2), (season("Lain", None), GB)):
             r.files[0].size = size
             self.app.model.add(r)
         self.app.expanded.add("AoT")
@@ -237,6 +237,77 @@ class DeleteWindowTests(unittest.TestCase):
         labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) == "command"]
         self.assertEqual(labels[0], "Delete 2 shows from Sonarr...")
         self.assertIn("Dismiss 2 shows (hide them from every tab)", labels)
+
+    # While Sonarr deletes shows no scan starts, so a delete's result never lands on a new scan's list.
+
+    def test_no_scan_while_deleting(self) -> None:
+        from unittest import mock
+
+        from dubchecker.gui import App
+        self.app.delete_in_sonarr = lambda *args: App.delete_in_sonarr(self.app, *args)
+        gate = __import__("threading").Event()
+        boxes = mock.Mock()
+        with mock.patch("dubchecker.sonarr_actions.delete_from_sonarr",
+                        lambda *_args: gate.wait(5) and DeleteReport(DELETE_FILES)), \
+                mock.patch("dubchecker.gui.messagebox", boxes), \
+                mock.patch("dubchecker.sonarr_actions.messagebox", boxes):
+            self.app.delete_in_sonarr(ui.delete_targets(["s|" + season_key("Lain", None)], self.app.model),
+                                      DELETE_FILES)
+            self.assertTrue(self.app.deleting)
+            self.assertFalse(self.app.start_scan())
+            self.assertIn("still deleting", boxes.showinfo.call_args[0][1])
+            self.assertFalse(self.app.start_scan(scheduled=True))
+            self.assertIn("scheduled scan didn't run", self.app.status_var.get())
+            self.app.delete_selected()  # and no second delete meanwhile
+            self.assertIn("still deleting", self.app.status_var.get())
+            gate.set()
+
+    def test_a_failed_delete_lets_scans_start_again(self) -> None:
+        from unittest import mock
+
+        from dubchecker.gui import App
+        from dubchecker.sonarr import SonarrError
+
+        def fail(*_args):
+            raise SonarrError("Sonarr is offline")
+
+        with mock.patch("dubchecker.sonarr_actions.delete_from_sonarr", fail), \
+                mock.patch("dubchecker.sonarr_actions.messagebox") as boxes:
+            App.delete_in_sonarr(self.app, ui.delete_targets(["p|AoT"], self.app.model), DELETE_SHOW)
+            kind, payload = self.app.queue.get(timeout=5)
+            self.assertEqual(kind, "deleted")
+            self.app._on_deleted(*payload)
+        self.assertFalse(self.app.deleting)
+        self.assertEqual(self.app.status_var.get(), "Couldn't delete in Sonarr: Sonarr is offline")
+        boxes.showerror.assert_called_once()
+        self.assertEqual(len(self.app.model.results), 3)  # nothing left the list
+
+
+    # Background work: one helper posts each task's message for the window, or its error message.
+
+    def run_background(self, work, on_error=lambda exc: ("notice", (f"failed: {exc}",))):
+        self.app.background("test", work, on_error).join(5)
+        return [self.app.queue.get_nowait() for _ in range(self.app.queue.qsize())]
+
+    def test_background_posts_the_result(self) -> None:
+        self.assertEqual(self.run_background(lambda: ("notice", ("done",))), [("notice", ("done",))])
+        self.assertEqual(self.run_background(lambda: None), [])
+
+    def test_background_failures(self) -> None:
+        from dubchecker.models import Cancelled
+        from dubchecker.sonarr import SonarrError
+
+        def fail(exc):
+            def work():
+                raise exc
+            return work
+
+        with self.assertLogs("dubchecker.gui", "WARNING") as logs:
+            self.assertEqual(self.run_background(fail(SonarrError("offline"))), [("notice", ("failed: offline",))])
+            self.assertEqual(self.run_background(fail(ValueError("bug"))), [("notice", ("failed: bug",))])
+        self.assertNotIn("Traceback", logs.output[0])  # Sonarr's own errors are expected
+        self.assertIn("Traceback", logs.output[1])     # anything else is a bug worth its traceback
+        self.assertEqual(self.run_background(fail(Cancelled())), [])  # Stop or closing: nothing to say
 
 
 if __name__ == "__main__":

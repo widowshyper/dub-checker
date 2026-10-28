@@ -1,3 +1,4 @@
+import os
 import tempfile
 import time
 import unittest
@@ -5,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from dubchecker.cache import MISSING, Cache, FileCacheWriter
+from tests.fakes import touch
 
 
 class CacheTests(unittest.TestCase):
@@ -55,6 +57,83 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(self.cache.clear_anilist(), 1)
         self.assertIs(self.cache.get_anilist("search:x", 30), MISSING)
         self.assertEqual(self.cache.file_count(), 1)  # file info survives
+
+
+class PruneTests(unittest.TestCase):
+    """cache.db doesn't keep growing: files gone from the library and expired AniList answers are forgotten."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.base = Path(self._tmp.name)
+        self.cache = Cache(self.base / "cache.db")
+        self.addCleanup(self.cache.close)
+
+    def test_prune_files_under_a_folder(self) -> None:
+        tracks = [{"index": 0, "language": "jpn"}]
+        paths = [r"\\nas\anime\A\1.mkv", r"\\nas\anime\A\2.mkv", r"\\nas\anime2\B\1.mkv", r"\\nas\other\C\1.mkv"]
+        self.cache.save_files([(p, 1, 1.0, tracks) for p in paths])
+        self.assertEqual(self.cache.prune_files("\\\\nas\\anime\\", {paths[0]}), 1)
+        left = self.cache.get_files({p: (1, 1.0) for p in paths})
+        self.assertEqual(sorted(left), sorted([paths[0], paths[2], paths[3]]))  # "anime2" isn't under "anime\"
+
+    def test_prune_expired_anilist_answers(self) -> None:
+        from unittest import mock
+        self.cache.save_anilist("search:old", {"data": {}})
+        with mock.patch("dubchecker.cache.time.time", return_value=time.time() + 40 * 86400):
+            self.cache.save_anilist("search:new", {"data": {}})
+            self.assertEqual(self.cache.prune_anilist(30), 1)
+            self.assertIsNot(self.cache.get_anilist("search:new", 30), MISSING)
+
+
+class ForgetMissingFilesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.lib, self.data = base / "Anime", base / "UserData"
+        self.data.mkdir()
+        self.cache = Cache(self.data / "cache.db")
+        self.addCleanup(self.cache.close)
+        self.files = [touch(self.lib / show / "Season 01" / f"e{n} [dual].mkv") for show in ("A", "B") for n in (1, 2)]
+
+    def scan(self, **run) -> None:
+        from tests.fakes import FakeLookup, FakeProber, make_pipeline
+        pipeline, _ = make_pipeline(self.data, self.cache, FakeProber([]), FakeLookup([]))
+        pipeline.run(root=str(self.lib), **run)
+
+    def test_deleted_files_are_forgotten_after_a_full_scan(self) -> None:
+        self.scan()
+        self.assertEqual(self.cache.file_count(), 4)
+        self.files[0].unlink()
+        self.scan(only={"B"})  # one tab: the rest of the library wasn't looked at
+        self.assertEqual(self.cache.file_count(), 4)
+        self.scan()
+        self.assertEqual(self.cache.file_count(), 3)
+
+    def test_kept_when_a_folder_couldnt_be_listed(self) -> None:
+        from unittest import mock
+        self.scan()
+        self.files[0].unlink()
+        real = os.scandir
+
+        def scandir(path):
+            if os.path.basename(str(path)) == "B":
+                raise PermissionError("no access")
+            return real(path)
+
+        with mock.patch("dubchecker.scanner.os.scandir", scandir):
+            self.scan()
+        self.assertEqual(self.cache.file_count(), 4)
+
+    def test_not_for_the_root_of_the_apps_own_drive(self) -> None:
+        from unittest import mock
+
+        from dubchecker.pipeline import ScanPipeline
+        pipeline = mock.Mock(spec=ScanPipeline, cache=mock.Mock())
+        pipeline._key.return_value = "\\"  # what E:\ becomes when the app runs from E:
+        ScanPipeline._forget_missing_files(pipeline, "E:\\", [])
+        pipeline.cache.prune_files.assert_not_called()
 
 
 if __name__ == "__main__":

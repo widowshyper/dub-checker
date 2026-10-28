@@ -244,11 +244,11 @@ Everything is in `UserData/` next to the program:
 | `config.json` | Settings (see below), including the Sonarr API key, encrypted on Windows. Rewritten on start so new settings appear; unknown keys are ignored. |
 | `overrides.json` | Your manual AniList matches: season key → AniList ID. |
 | `dismissed.json` | The shows you've dismissed (by folder name), with when. |
-| `cache.db` | SQLite: audio tracks of every file read (keyed by path, size and date) and AniList answers. |
+| `cache.db` | SQLite: audio tracks of every file read (keyed by path, size and date) and AniList answers. Files that are gone from a library folder are forgotten after a complete scan of it, and AniList answers older than `cache_expiry_days` when Dub Checker starts. |
 | `last_scan.json` | The results of your last scan, shown again when Dub Checker starts. Deleted by Clear results. |
 | `dubInfo.json` | Saved copy of the [MAL-Dubs](https://github.com/MAL-Dubs/MAL-Dubs) list, refreshed weekly. |
 | `logs/app.log` | Log files (rotated). Each scan logs a one-line summary. |
-| `bin/` | `ffprobe`, downloaded only if MediaInfo can't be used. |
+| `bin/` | `ffprobe`, downloaded only if MediaInfo can't be used, and only run once it matches the checksum its site publishes (gyan.dev on Windows, johnvansickle.com on 64-bit Linux; on macOS and other Linux machines, install MediaInfo or FFmpeg yourself). |
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -257,7 +257,7 @@ Everything is in `UserData/` next to the program:
 | `theme` | `system` | `system` (match Windows), `light` or `dark` |
 | `confidence_threshold` | 80 | AniList matches below this go to Check Manually |
 | `cache_expiry_days` | 30 | How long AniList answers are reused |
-| `anilist_min_interval` | 2.1 | Seconds between AniList requests (about 28 a minute) |
+| `anilist_min_interval` | 2.1 | Seconds between AniList requests until AniList says its limit (then it's paced by that, about 30 a minute in 2026); a higher value is always kept |
 | `probe_workers` | 4 | Files read at the same time |
 | `network_workers_enabled` / `network_workers` | off / 6 | A separate number for network shares |
 | `pause_enabled` / `pause_every_files` / `pause_seconds` | off / 50 / 30 | Breaks while reading |
@@ -307,9 +307,9 @@ dubchecker/
   config.py       Config dataclass, Overrides (manual matches), Dismissed shows, drive-letter-free path helpers
   models.py       data types: AudioTrack, FileResult, ShowGroup, AniListMatch, DubInfo, ShowResult, enums
   scanner.py      folder listing (scandir), title cleaning, season detection and grouping, network detection
-  media_probe.py  MediaInfo / ffprobe readers, ffprobe download, language classification
+  media_probe.py  MediaInfo / ffprobe readers, checked ffprobe download, language classification
   cache.py        SQLite cache (WAL, batched lookups and saves)
-  anilist.py      GraphQL client with rate limiting, fuzzy matching, season logic
+  anilist.py      GraphQL client with rate limiting and batched lookups, fuzzy matching, season logic
   dub_sources.py  MAL-Dubs list, combining dub signals, the online lookup service
   categorize.py   deciding the group and writing the notes
   sonarr.py       Sonarr API client, media info parsing, path mapping
@@ -317,8 +317,9 @@ dubchecker/
   theme.py        sv-ttk light/dark, the macOS-style palettes, Card.* styles, DPI font scaling, title bar
   glass.py        glass panels, capsule buttons, segmented control, search field (smooth shapes drawn into images)
   gui.py          main window
-  dialogs.py      episode details, Dismissed shows, Fix match, Settings
-  results_store.py  saving and loading the last scan's results (last_scan.json)
+  sonarr_actions.py  the main window's Sonarr actions: open, search, tag, delete
+  dialogs.py      episode details, Dismissed shows, Delete, Fix match, Settings
+  results_store.py  saving (in the background) and loading the last scan's results (last_scan.json)
   ui_common.py    labels, colours, the results model, helpers
 packaging/
   build.py        PyInstaller build -> dist/Dub Checker/ and dist/Dub Checker.zip
