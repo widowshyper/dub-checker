@@ -85,7 +85,7 @@ when you click **Save**; **Cancel** (or Esc) forgets them.
 **Scanning on a schedule.** **Settings > Schedule** scans automatically every so many hours (24 is once a day) while Dub Checker is open. Minimised is fine.
 - Choose **Every show**, or one tab such as **Only Needs English Audio** to keep an eye on shows waiting for a dub.
 - The next scheduled scan is shown under the status line.
-- If a scan came due while Dub Checker was closed, it runs about a minute after you open it. It never interrupts a scan you started yourself.
+- If a scan came due while Dub Checker was closed, it runs about a minute after you open it. It never interrupts a scan you started yourself, and waits while Sonarr is deleting shows.
 - Problems are reported on the status line rather than in pop-ups, since nobody may be watching. Warnings also go to `logs/app.log`.
 
 While it scans, the panel shows which step it's on (for example "Step 2 of 3: Checking online whether English dubs exist") with a line explaining what that step does, then the progress of the step itself:
@@ -162,7 +162,7 @@ Choose where air status comes from in **Settings > General > Air status**:
 - **From AniList** (the default):
   - Shows that were looked up on AniList get it automatically.
   - Shows decided from your own files alone (a season with dual-audio episodes) normally skip AniList, so a last step called "Checking air status" looks them up too. Their group doesn't change, and seasons still missing English audio go first.
-  - The first scan takes longer, because AniList asks apps to pace their requests. After that, finished shows are remembered for 30 days and still-airing shows are checked again twice a day.
+  - The first scan takes longer, because AniList allows about 30 requests a minute. Dub Checker asks about several shows in each request (up to 10 searches or 8 shows' details), so it's still several times quicker than one at a time. After that, finished shows are remembered for 30 days and still-airing shows are checked again twice a day.
 - **From Sonarr:**
   - Dub Checker asks your Sonarr for each series' status and its calendar of upcoming episodes. That's two quick requests for the whole library, with no waiting on AniList.
   - Shows are matched to Sonarr by folder name (then title), so this also works after a local files scan, as long as Sonarr's address and API key are set.
@@ -211,6 +211,8 @@ Sonarr only replaces a file when it finds a release it rates higher under your q
 
 Select one or more shows or seasons (Ctrl-click or Shift-click for several), then press **Delete** or right-click and choose **Delete from Sonarr...**. You pick one of three ways, and nothing is chosen for you:
 
+![The Delete from Sonarr window: three selected shows with their sizes, the three ways to delete them, and how much space the chosen one frees](docs/screenshots/delete.png)
+
 | Choice | What happens |
 |---|---|
 | **Delete the shows entirely** | Sonarr removes the whole shows (even if you picked only some seasons) and deletes their folders from the disk. |
@@ -221,7 +223,8 @@ Select one or more shows or seasons (Ctrl-click or Shift-click for several), the
 - Each show in the window has its size, and the bottom says how much the choice you picked frees. Deleting a show entirely frees the whole show, not just the seasons you picked.
 - Files are deleted by Sonarr, from the disk, and can't be got back. The deleted shows and seasons then leave the list, and the status line says how much space was freed (as Sonarr counts it).
 - Shows are found in Sonarr by folder name, then title, so this works after a Local files scan too. Shows Sonarr doesn't have are skipped and named on the status line.
-- It needs Sonarr set up in Settings.
+- It needs Sonarr set up in Settings. While Sonarr is deleting, no scan starts (a scheduled one waits a minute and tries again).
+- If Sonarr refuses, its own explanation is shown, e.g. "Access to the path ... is denied."
 
 Works with Sonarr v3, v4 and v5 (API v3). Manual matches are shared between folder scans and Sonarr scans because both use the series folder name.
 
@@ -297,7 +300,7 @@ To reset, close the app and delete the files you want to start over with (or all
 - **AniList matching:** titles are fuzzy-matched against romaji, English, native titles and synonyms, adjusted for the year.
   - For Season 2 and later, Dub Checker follows AniList's sequel chain from Season 1 and also searches "Title Season N".
   - Specials always go to Check Manually.
-  - Requests are rate-limited and every answer, including "not found", is cached.
+  - Requests are paced by the limit AniList reports and batched (several searches or shows' details per request); every answer, including "not found", is cached.
 
 ## Development
 
