@@ -15,7 +15,7 @@ from typing import Any
 
 from dubchecker.config import from_portable, to_portable, write_json
 from dubchecker.models import (AirInfo, AniListMatch, AudioTrack, Category, DubInfo, FileResult, FileStatus, Lang,
-                               ShowGroup, ShowResult, VideoFile, air_from_match)
+                               Rating, ShowGroup, ShowResult, VideoFile, air_from_match)
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _result_to_dict(r: ShowResult) -> dict:
             "files": [_file_to_dict(f) for f in r.files], "category": r.category.name,
             "match": asdict(r.match) if r.match else None, "dub": asdict(r.dub) if r.dub else None,
             "notes": list(r.notes), "looked_up": r.looked_up, "stopped": r.stopped,
-            "air": asdict(r.air) if r.air else None}
+            "air": asdict(r.air) if r.air else None, "rating": asdict(r.rating) if r.rating else None}
 
 
 def save_scan(path: Path, scan: SavedScan) -> None:
@@ -102,8 +102,9 @@ def _result_from_dict(d: dict) -> ShowResult:
         air = AirInfo(**_known(AirInfo, d["air"])) if d["air"] else None
     else:  # saved by 2.3.0, which kept air status inside the AniList match
         air = air_from_match(match)
+    rating = Rating(**_known(Rating, d["rating"])) if d.get("rating") else None
     return ShowResult(group, files, Category[d["category"]], match=match, dub=dub, notes=list(d.get("notes") or []),
-                      looked_up=bool(d.get("looked_up")), stopped=bool(d.get("stopped")), air=air)
+                      looked_up=bool(d.get("looked_up")), stopped=bool(d.get("stopped")), air=air, rating=rating)
 
 
 def load_scan(path: Path) -> SavedScan | None:

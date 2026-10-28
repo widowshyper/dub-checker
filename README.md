@@ -105,6 +105,10 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
   - **Hide a tab** by unticking it in the **Edit** menu next to Library, or right-click it and choose **Hide this tab**. Tick it again to bring it back. Hidden tabs stay hidden after a restart.
 - **English Only tab and English only column:** the English Only tab lists seasons with episodes that only have English audio, so the original language (Japanese, Korean or Chinese) is missing. Replace them with dual-audio releases to get both. Like Airing, it cuts across the other groups, and the **English only** column counts these episodes in every tab.
 - **Airing tab and Air status column:** these show whether a show is still airing, not out yet, on hiatus, finished or cancelled, with the next episode's date while it airs (for example "Airing - ep 8 on 3 Oct"). The Airing tab lists shows that are still airing or not out yet, where an English dub may still be on its way. It cuts across the other groups. Click the **Air status** header to sort airing shows first.
+- **The Rating column** shows how well liked each show is, out of 10:
+  - **From Sonarr** when it's set up and rates the series (its rating comes from Sonarr's metadata source). Shows are matched to Sonarr by folder name, then title, so this works after a Local files scan too.
+  - **Otherwise from AniList's average score** for the season. Seasons decided from your files alone haven't been looked up on AniList, so a scan looks them up for their score; this takes a while the first time, and answers are saved. Turn it off with **Settings > General > Rate shows Sonarr doesn't by AniList's score**.
+  - A show with several seasons shows Sonarr's rating, or the average of its seasons' AniList scores. The episode window says where a season's rating came from, e.g. "8.6 out of 10, from Sonarr (1,234 votes)". Click the **Rating** header to sort the best rated first; unrated shows go last.
 - A show with several seasons is a bold row. **To open or close a show or a season**, you can:
   - click its ► arrow, or anywhere on its coloured audio bar;
   - double-click the row;
@@ -134,7 +138,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
 - **Search** (Ctrl+F) narrows the list by name; Esc clears it.
 - **Air status** (the drop-down next to Search) lists only seasons that are Airing, Not yet aired, On hiatus, Finished, Cancelled or Not checked. The tab counts follow it, for example "1 of 19" when only 1 of a tab's 19 shows is finished. It's hidden when air status is off.
 - **Dismissing a show:** right-click it and choose **Dismiss this show**. It's hidden from every tab, the counts and exports, and stays hidden after a rescan. **Dismissed shows** above the list shows what you've dismissed and brings shows back.
-- **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group and air status.
+- **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group, air status and rating (and where the rating came from).
 - **Your results are kept.** When you close Dub Checker and open it again, the last scan is back, with the same tab and open shows, and the status line says when it was made. A scan that was stopped, or still running when you closed the window, keeps the part that was finished.
 - **Clear results** empties the table, resets the window and forgets the saved list, so it doesn't come back next time. Your settings, manual matches, and what Dub Checker knows about your files and AniList are kept, so the next scan is quick. To forget saved AniList answers, click **Clear** next to Saved online info in **Settings > General**.
 
@@ -177,6 +181,7 @@ Choose **Sonarr** in the sidebar's Scan section, then click **Change...** next t
 - **Only series set to the Anime series type:** on by default.
 - **Read files myself when Sonarr doesn't know a track's language:** on by default. Only files Sonarr couldn't label (or hasn't analysed) are read, through the same cache and throttle as folder scans.
 - **Path mapping:** only needed if Sonarr runs on another machine or in Docker. For example, Sonarr sees `/tv` while this PC sees `\\nas\media\tv`. Fill in both or neither. If files can't be reached, you get one warning suggesting this.
+- **Ratings:** once Sonarr is set up, each show's rating comes from Sonarr (see [the Rating column](#using-the-app)).
 - **Test** (next to Test the connection) shows Sonarr's version, how many series it has, and how many are set to Anime.
 
 **Searching for replacements.** Right-click a season or show (or use the button in the episode window) and choose **Search for replacements in Sonarr...**. Dub Checker finds the series in Sonarr by its folder name (or its title), matches your Japanese-only episodes to Sonarr's by file name, and starts an *EpisodeSearch* for exactly those episodes. If none can be matched (for example, the files were renamed since), it searches the whole season instead. This works after a Sonarr scan and after a Local files scan of a library Sonarr manages. Progress shows up on Sonarr's Activity page.
@@ -241,6 +246,7 @@ Everything is in `UserData/` next to the program:
 | `ignore_commentary_tracks` | on | Tracks named "Commentary" don't count |
 | `air_status_source` | `anilist` | Where air status comes from: `anilist`, `sonarr` or `off` |
 | `dub_grace_days` | 21 | How long a dub may follow the original before it counts as missing; 0 turns Dub Coming off |
+| `anilist_ratings` | on | Rate shows Sonarr doesn't by AniList's average score (looking up seasons decided from your files) |
 | `hidden_tabs` | none | The tabs you've hidden |
 | `tab_order` | default order | The order you've dragged the sidebar's tabs into |
 | `scan_scope` | `all` | What **Scan library** covers: `all`, or a tab such as `NEEDS_DUB` |

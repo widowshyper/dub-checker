@@ -26,6 +26,17 @@ class SonarrSeries:
     seasons: list = field(default_factory=list)        # Sonarr's season list, with per-season statistics
     title_slug: str = ""                               # the series' page in Sonarr: <address>/series/<slug>
     tags: list = field(default_factory=list)           # Sonarr tag ids
+    rating: float | None = None                        # out of 10 (from Sonarr's metadata source); None if unrated
+    votes: int = 0
+
+
+def _rating(data: Any) -> tuple[float | None, int]:
+    """Sonarr's ``ratings``: {"votes": 1234, "value": 8.6}. A rating with no votes is no rating."""
+    try:
+        value, votes = float(data.get("value") or 0), int(data.get("votes") or 0)
+    except (AttributeError, TypeError, ValueError):
+        return None, 0
+    return (value if value > 0 and votes > 0 else None), votes
 
 
 def normalise_url(url: str) -> str:
@@ -128,7 +139,8 @@ class SonarrClient:
                              path=str(s.get("path") or ""), series_type=str(s.get("seriesType") or "").lower(),
                              status=str(s.get("status") or "").lower(), seasons=list(s.get("seasons") or []),
                              title_slug=str(s.get("titleSlug") or ""),
-                             tags=[int(t) for t in s.get("tags") or [] if str(t).isdigit()])
+                             tags=[int(t) for t in s.get("tags") or [] if str(t).isdigit()],
+                             rating=_rating(s.get("ratings"))[0], votes=_rating(s.get("ratings"))[1])
                 for s in self._get("/api/v3/series") or [] if "id" in s]
 
     def calendar(self, start: str, end: str) -> list[dict]:

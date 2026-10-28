@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 API_URL = "https://graphql.anilist.co"
 MEDIA_FIELDS = ("id idMal type title { romaji english native } synonyms format episodes seasonYear "
-                "startDate { year month day } popularity siteUrl status")
+                "startDate { year month day } popularity siteUrl status averageScore")
 SEARCH_QUERY = ("query ($s: String) { Page(perPage: 15) { media(search: $s, type: ANIME) { %s } } }"
                 % MEDIA_FIELDS)
 # voiceActors comes back null unless the character edge also selects node { id }.
@@ -85,12 +85,14 @@ class AniListClient:
 
     def details(self, media_id: int) -> dict | None:
         """Full details. Saved answers are reused for ``expiry_days``, except that a show that's still
-        airing (or was saved before air status was asked for) is refreshed after ``AIRING_REFRESH_DAYS``."""
+        airing is refreshed after ``AIRING_REFRESH_DAYS``, and ones saved before air status or the score
+        were asked for are asked again."""
         def usable(data: dict | None, age_days: float) -> bool:
             media = (data or {}).get("Media")
             if media is None or age_days <= AIRING_REFRESH_DAYS:
                 return True
-            return "status" in media and media["status"] not in AIRING_STATUSES
+            return ("status" in media and media["status"] not in AIRING_STATUSES
+                    and "averageScore" in media)
 
         data = self._query(f"media:{media_id}", DETAILS_QUERY, {"id": int(media_id)}, usable)
         return (data or {}).get("Media")
@@ -291,6 +293,7 @@ def to_match(media: dict, confidence: float, manual: bool = False, note: str = "
         air_status=media.get("status") or "",
         next_episode=upcoming.get("episode"),
         next_airing_at=upcoming.get("airingAt"),
+        score=media.get("averageScore") or None,
     )
 
 

@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 2.10.1
+**Version:** 2.11.0
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -40,6 +40,10 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 - Search, an Air status filter (the tab counts follow it, e.g. "1 of 19 shows"), sorting, and CSV export.
 - Shows can be dismissed (hidden everywhere, even after a rescan) and brought back from a Dismissed shows window.
 - Results, open rows and selected tabs are kept after a restart. Clear results removes them.
+
+**Ratings**
+- Each show is rated out of 10: Sonarr's rating for the series (one request per scan, matched by folder name then title, so local files scans get it too), else AniList's average score for the season.
+- Seasons decided from your files alone are looked up on AniList for their score (Settings > General can turn this off). Shown in a sortable Rating column, the episode window and the CSV export.
 
 **Look**
 - A macOS-style design in light and dark: a floating glass sidebar, capsule buttons, a segmented Local files/Sonarr switch, a rounded search field, Apple's system colours, and a title bar that blends into the window on Windows 11. Settings is laid out like System Settings: its pages in a glass sidebar, and each page's settings in rounded groups with switches and controls on the right, filling the window and scrolling when needed.
@@ -106,7 +110,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Build and test**
 - PyInstaller (`build.bat`) produces the portable one-folder app and zip.
-- A unittest suite of 315 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
+- A unittest suite of 326 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
 
 ## Out of scope
 

@@ -19,12 +19,13 @@ from tests.fakes import FakeLookup, FakeProber, make_pipeline, touch
 API_KEY = "secret"
 SERIES = [
     {"id": 1, "title": "Attack on Titan", "year": 2013, "path": "/tv/Attack on Titan (2013)", "seriesType": "anime",
-     "titleSlug": "attack-on-titan", "tags": [1, 2], "status": "continuing", "seasons": [
+     "titleSlug": "attack-on-titan", "tags": [1, 2], "status": "continuing", "ratings": {"votes": 1234, "value": 8.6}, "seasons": [
          {"seasonNumber": 1, "statistics": {"previousAiring": "2013-09-28T15:00:00Z"}},
          {"seasonNumber": 2, "statistics": {"previousAiring": "2017-06-17T15:00:00Z",
                                             "nextAiring": "2099-01-07T15:00:00Z"}}]},
     {"id": 2, "title": "Friends", "year": 1994, "path": "/tv/Friends", "seriesType": "standard", "status": "ended"},
-    {"id": 3, "title": "Frieren", "year": 2023, "path": "/tv/Frieren", "seriesType": "anime", "status": "ended"},
+    {"id": 3, "title": "Frieren", "year": 2023, "path": "/tv/Frieren", "seriesType": "anime", "status": "ended",
+     "ratings": {"votes": 0, "value": 0}},
 ]
 CALENDAR = [{"seriesId": 1, "seasonNumber": 2, "episodeNumber": 9, "airDateUtc": "2099-01-07T15:00:00Z"},
             {"seriesId": 1, "seasonNumber": 2, "episodeNumber": 10, "airDateUtc": "2099-01-14T15:00:00Z"}]
@@ -198,7 +199,7 @@ class ServerTests(unittest.TestCase):
         log: list = []
         prober = FakeProber(log)
         config.setdefault("air_status_source", "off")  # the air status steps have their own tests
-        pipeline, _ = make_pipeline(self.data, self.cache, prober, FakeLookup(log), config=Config(**config))
+        pipeline, _ = make_pipeline(self.data, self.cache, prober, FakeLookup(log), config=Config(**{"anilist_ratings": False, **config}))
         outcome = pipeline.run(sonarr=SonarrClient(self.url, API_KEY))
         return outcome, prober, log, {r.key: r for r in outcome.results}
 

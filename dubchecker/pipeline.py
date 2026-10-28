@@ -23,8 +23,8 @@ from dubchecker.categorize import categorize_local, categorize_lookup, needs_loo
 from dubchecker.config import Config, Overrides, to_portable
 from dubchecker.dub_sources import LookupResult
 from dubchecker.media_probe import ProbeUnavailable, build_file_result
-from dubchecker.models import (Cancelled, Category, FileResult, FileStatus, ShowGroup, ShowResult, VideoFile, season_key,
-                               air_from_match, season_sort_key, strip_id_tags)
+from dubchecker.models import (Cancelled, Category, FileResult, FileStatus, Rating, ShowGroup, ShowResult, VideoFile,
+                               season_key, air_from_match, season_sort_key, strip_id_tags)
 from dubchecker.scanner import FolderLister, episode_number, group_show, is_network_path, list_library, natural_key
 from dubchecker.sonarr import (SeriesIndex, SonarrAirStatus, SonarrClient, SonarrError, aired_by_file, last_path_part,
                               map_path, tracks_from_media_info)
@@ -257,7 +257,8 @@ class ScanPipeline:
             dates_client: SonarrClient | None = None) -> ScanOutcome:
         """Scan a folder (`root`) or Sonarr (`sonarr`). `air_client` is the Sonarr to ask for air status
         when that's set to come from Sonarr; a Sonarr scan uses its own client. `dates_client` is the Sonarr
-        to ask when episodes aired (to tell a dub that's on its way from a missing one); AniList otherwise.
+        to ask when episodes aired (to tell a dub that's on its way from a missing one) and for each show's
+        rating; AniList otherwise.
 
         `only` limits the scan to these shows (by folder name, as in ``ShowGroup.folder_name``). Other show
         folders aren't even listed, so rescanning one tab is much quicker than a full scan."""
@@ -542,9 +543,11 @@ class ScanPipeline:
                 results.append(result)
                 self.emit("result", result)
             if not self.stopped and self.config.air_status_source == "anilist":
-                self._add_air_status(results, service)
+                service = self._add_air_status(results, service)
             elif not self.stopped and self.config.air_status_source == "sonarr":
                 self._add_sonarr_air_status(results)
+            if not self.stopped:
+                self._add_ratings(results, service)
             if not self.stopped:
                 self._add_air_dates(results)
         finally:
@@ -642,36 +645,76 @@ class ScanPipeline:
         if updated:
             self.emit("results", updated)
 
-    def _add_air_status(self, results: list[ShowResult], service: LookupService | None) -> None:
+    def _add_air_status(self, results: list[ShowResult], service: LookupService | None) -> LookupService | None:
         """Last step: seasons decided from your files skipped AniList, so look them up now for their air
-        status. Their group doesn't change. Seasons still missing English audio go first."""
+        status (and score). Their group doesn't change. Seasons still missing English audio go first."""
         todo = [i for i, r in enumerate(results) if r.match is None and not r.looked_up and not r.stopped]
-        todo.sort(key=lambda i: results[i].category is not Category.NEEDS_DUB)
         if todo:
             verb = "is" if len(todo) == 1 else "are"
             self.phase(3, "Checking which shows are still airing (from AniList)",
                        f"For the Airing tab and the Air status column: {plural(len(todo), 'season')} decided from "
                        f"your files alone {verb} looked up now. Groups don't change. To make this quicker, get air "
                        "status from Sonarr or turn it off in Settings > General.")
+        return self._match_on_anilist(results, todo, service, "Asking AniList if it's still airing", with_air=True)
+
+    def _match_on_anilist(self, results: list[ShowResult], todo: list[int], service: LookupService | None,
+                          doing: str, with_air: bool) -> LookupService | None:
+        """Find AniList matches for seasons decided from your files alone (which skipped AniList), for their
+        air status and score. Their group doesn't change. Seasons still missing English audio go first.
+        Returns the lookup service, made if it was needed."""
+        todo = sorted(todo, key=lambda i: results[i].category is not Category.NEEDS_DUB)
         for number, index in enumerate(todo):
             if self.cancel.is_set():
                 self.stopped = True
-                return
+                break
             season = results[index]
             try:
                 if service is None:
                     self.progress("Connecting to AniList...", busy=True)
                     service = self.lookup_factory()
-                self.progress(f"Asking AniList if it's still airing: season {number + 1} of {len(todo)} - "
-                              f"{season.group.display_title}", number / len(todo))
+                self.progress(f"{doing}: season {number + 1} of {len(todo)} - {season.group.display_title}",
+                              number / len(todo))
                 lookup = service.lookup(season.group)
             except Cancelled:
                 self.stopped = True
-                return
-            except Exception as exc:  # e.g. AniList unreachable: the season keeps its result, just no air status
-                log.warning("Air status lookup failed for %s: %s", season.group.display_title, exc)
+                break
+            except Exception as exc:  # e.g. AniList unreachable: the season keeps its result, just without this
+                log.warning("AniList lookup failed for %s: %s", season.group.display_title, exc)
                 continue
             self.stats.lookups += 1
             if lookup.match is not None:
-                results[index] = dataclasses.replace(season, match=lookup.match, air=air_from_match(lookup.match))
+                changes = {"match": lookup.match, **({"air": air_from_match(lookup.match)} if with_air else {})}
+                results[index] = dataclasses.replace(season, **changes)
                 self.emit("result", results[index])
+        return service
+
+    def _add_ratings(self, results: list[ShowResult], service: LookupService | None) -> None:
+        """Each show's rating: Sonarr's for the series (one request for the whole library, matched by folder
+        name, then title, so it works after a local files scan too), else AniList's average score for the
+        season. Seasons decided from your files alone have no AniList match yet, so they're looked up."""
+        if self.dates_client is not None:
+            self.progress("Getting ratings from Sonarr...", busy=True)
+            try:
+                index = SeriesIndex(self.dates_client.series())
+            except SonarrError as exc:
+                log.warning("Couldn't get ratings from Sonarr: %s", exc)
+            else:
+                updated = []
+                for i, r in enumerate(results):
+                    series = index.find(r.group.folder_name, r.group.show_title)
+                    if series is not None and series.rating is not None:
+                        results[i] = dataclasses.replace(r, rating=Rating(series.rating, "Sonarr", series.votes))
+                        updated.append(results[i])
+                if updated:
+                    self.emit("results", updated)
+        if not self.config.anilist_ratings or self.config.air_status_source == "anilist":
+            return  # (with air status from AniList, every season was already looked up there)
+        todo = [i for i, r in enumerate(results)
+                if r.rating is None and r.match is None and not r.looked_up and not r.stopped]
+        if todo:
+            verb = "is" if len(todo) == 1 else "are"
+            self.phase(None, "Getting ratings from AniList",
+                       f"{plural(len(todo), 'season')} decided from your files alone {verb} looked up on AniList "
+                       "for a rating" + (", because Sonarr doesn't rate them" if self.dates_client is not None else "")
+                       + ". Groups don't change. To skip this, turn off AniList ratings in Settings > General.")
+            self._match_on_anilist(results, todo, service, "Getting the rating from AniList", with_air=False)

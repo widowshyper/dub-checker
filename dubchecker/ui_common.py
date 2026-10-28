@@ -16,7 +16,8 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from dubchecker.dub_sources import SOURCE_FILES
-from dubchecker.models import Category, FileResult, FileStatus, Lang, ShowResult, season_sort_key
+from dubchecker.models import (Category, FileResult, FileStatus, Lang, Rating, ShowResult, rating_from_match,
+                               season_sort_key)
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 INDENT = "  "  # two em spaces: season rows under their show, tracks under their file
@@ -138,6 +139,33 @@ def match_text(r: ShowResult) -> str:
     if r.match is None:
         return "-"
     return "Your pick" if r.match.manual else f"{r.match.confidence:.0f}%"
+
+
+def rating_of(r: ShowResult) -> Rating | None:
+    """Sonarr's rating for the series, else AniList's average score for the season."""
+    return r.rating or rating_from_match(r.match)
+
+
+def show_rating(seasons: list[ShowResult]) -> float | None:
+    """A whole show's rating: Sonarr's (one per series), else the average of its seasons' AniList scores."""
+    ratings = [rating for rating in map(rating_of, seasons) if rating is not None]
+    sonarr = [rating.value for rating in ratings if rating.source == "Sonarr"]
+    values = sonarr[:1] or [rating.value for rating in ratings]
+    return sum(values) / len(values) if values else None
+
+
+def rating_text(value: float | None) -> str:
+    return "-" if value is None else f"{value:.1f}"
+
+
+def rating_detail(r: ShowResult) -> str:
+    """For the episode window, e.g. '8.6 out of 10, from Sonarr (1,234 votes)'."""
+    rating = rating_of(r)
+    if rating is None:
+        return "No rating - Sonarr doesn't rate this show and AniList has no score for it"
+    votes = f" ({plural(rating.votes, 'vote')})" if rating.votes else ""
+    where = "Sonarr" if rating.source == "Sonarr" else "AniList's average score"
+    return f"{rating.value:.1f} out of 10, from {where}{votes}"
 
 
 def notes_text(r: ShowResult) -> str:

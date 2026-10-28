@@ -115,7 +115,13 @@ class AniListAirStatusTests(unittest.TestCase):
         return session.posts
 
     def test_finished_shows_are_remembered(self) -> None:
-        self.assertEqual(self.details_after(dict(media(5, "S"), status="FINISHED"), age_hours=24 * 20), 0)
+        finished = dict(media(5, "S"), status="FINISHED", averageScore=80)
+        self.assertEqual(self.details_after(finished, age_hours=24 * 20), 0)
+
+    def test_answers_saved_before_scores_are_asked_again(self) -> None:
+        older = dict(media(5, "S"), status="FINISHED")  # saved before Dub Checker asked for the score
+        self.assertEqual(self.details_after(older, age_hours=24 * 20), 1)
+        self.assertEqual(self.details_after(older, age_hours=1), 0)  # but not straight after saving it
 
     def test_airing_shows_are_refreshed_after_12_hours(self) -> None:
         self.assertEqual(self.details_after(dict(media(5, "S"), status="RELEASING"), age_hours=2), 0)
@@ -146,7 +152,8 @@ class PipelineAirStatusTests(unittest.TestCase):
         log: list = []
         lookup = FakeLookup(log, dub=True, air_status="RELEASING", on_lookup=on_lookup)
         pipeline, events = make_pipeline(self.data, self.cache, FakeProber(log), lookup,
-                                         config=Config(probe_workers=1, air_status_source="anilist" if check else "off"),
+                                         config=Config(probe_workers=1, air_status_source="anilist" if check else "off",
+                                                   anilist_ratings=False),
                                          cancel=cancel)
         outcome = pipeline.run(root=str(self.lib))
         return outcome, [key for kind, key in log if kind == "lookup"], {r.key: r for r in outcome.results}

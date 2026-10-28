@@ -136,6 +136,7 @@ class Config:
     window_geometry: str = ""
     air_status_source: str = "anilist"            # where air status comes from: "anilist", "sonarr" or "off"
     dub_grace_days: int = 21                       # a dub may follow the original by this long (0 = off)
+    anilist_ratings: bool = True                     # rate shows Sonarr doesn't by AniList's score (looked up)
     hidden_tabs: list = field(default_factory=list)  # names of the group tabs you've hidden
     tab_order: list = field(default_factory=list)    # the tabs in the order you've dragged them into
     air_filter: str = "all"                          # the Air status drop-down above the list (AIR_FILTERS)

@@ -1,4 +1,4 @@
-﻿"""Air status from AniList, from Sonarr, or switched off (Settings > General > Air status)."""
+"""Air status from AniList, from Sonarr, or switched off (Settings > General > Air status)."""
 import json
 import tempfile
 import threading
@@ -108,7 +108,7 @@ class PipelineSourceTests(unittest.TestCase):
         log: list = []
         lookup = FakeLookup(log, air_status="RELEASING")
         pipeline, _ = make_pipeline(self.data, self.cache, FakeProber(log), lookup,
-                                    config=Config(probe_workers=1, air_status_source=source))
+                                    config=Config(probe_workers=1, air_status_source=source, anilist_ratings=False))
         outcome = pipeline.run(root=str(self.lib), air_client=air_client)
         return outcome, [key for kind, key in log if kind == "lookup"], {r.key: r for r in outcome.results}
 

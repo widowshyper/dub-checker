@@ -78,6 +78,10 @@ follow it (for example "1 of 19").
 Air status can come from AniList, from your Sonarr, or be switched off:
 Settings > General > Air status.
 
+The Rating column shows how well liked each show is, out of 10: Sonarr's
+rating when Sonarr is set up and rates it, otherwise AniList's average score.
+Click the Rating header to sort the best rated first.
+
 Don't care about a show? Right-click it and choose "Dismiss this show". It's
 hidden from every tab, even after a rescan. "Dismissed shows" above the list
 brings it back.

@@ -177,6 +177,7 @@ class AniListMatch:
     air_status: str = ""                 # AniList: RELEASING, NOT_YET_RELEASED, FINISHED, CANCELLED, HIATUS
     next_episode: int | None = None      # the next episode to air, while it's airing
     next_airing_at: int | None = None    # when it airs (Unix time)
+    score: int | None = None             # AniList's average score, out of 100
 
     @property
     def still_airing(self) -> bool:
@@ -208,6 +209,20 @@ def air_from_match(match: AniListMatch | None) -> AirInfo | None:
 
 
 @dataclass
+class Rating:
+    """How well liked a show is, out of 10: Sonarr's rating for the series, else AniList's average score."""
+    value: float
+    source: str                          # "Sonarr" or "AniList"
+    votes: int | None = None             # Sonarr says how many votes its rating is from
+
+
+def rating_from_match(match: AniListMatch | None) -> Rating | None:
+    if match is None or not match.score:
+        return None
+    return Rating(match.score / 10, "AniList")
+
+
+@dataclass
 class DubInfo:
     exists: bool | None  # None = couldn't check
     sources: list[str] = field(default_factory=list)
@@ -225,6 +240,7 @@ class ShowResult:
     looked_up: bool = False
     stopped: bool = False
     air: AirInfo | None = None
+    rating: Rating | None = None         # from Sonarr; AniList's score (in ``match``) stands in when there's none
     # Worked out by ui_common.mark_dub_timing whenever results are shown, not saved: simulcast dubs come out
     # a few weeks after the original, so the newest original-only episodes may just be waiting for theirs.
     dub_coming: bool = field(default=False, compare=False)          # every missing dub is still on its way

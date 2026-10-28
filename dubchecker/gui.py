@@ -42,6 +42,7 @@ COLUMNS = (
     ("show", "Show", 230, True),
     ("anilist", "Matched on AniList", 220, False),
     ("air", "Air status", 150, False),
+    ("rating", "Rating", 70, False),
     ("episodes", "Episodes", 70, False),
     ("dual", "Dual audio", 90, False),
     ("orig", "Original only", 105, False),
@@ -51,7 +52,7 @@ COLUMNS = (
     ("notes", "Notes", 220, True),
     ("group", "Group", 140, False),  # only shown when several groups are listed together
 )
-NUMERIC_COLUMNS = frozenset({"audio", "episodes", "dual", "orig", "eng", "match"})
+NUMERIC_COLUMNS = frozenset({"audio", "rating", "episodes", "dual", "orig", "eng", "match"})
 BAR_WIDTH, BAR_HEIGHT = 96, 11  # the audio bar in the first column, at 100 % scaling
 DRAG_THRESHOLD = 10  # pixels (at 100 %) a tab must move before a press counts as dragging, not clicking
 # Episode rows: only the episodes that need attention are coloured; the square in the Audio column
@@ -1252,11 +1253,14 @@ class App:
             return f"{indent}{text}"
         return f"{indent}{ARROW_OPEN if is_open else ARROW_CLOSED}  {text}"
 
-    # The value tuples follow COLUMNS: show, anilist, air, episodes, dual, orig, eng, confirmed, match, notes, group.
+    # The value tuples follow COLUMNS: show, anilist, air, rating, episodes, dual, orig, eng, confirmed, match, notes,
+    # group.
 
     def _season_values(self, r: ShowResult, label: str) -> tuple:
-        return (label, ui.anilist_text(r), ui.air_status_text(r), r.episodes, r.dual, r.original_only, r.english_only,
-                ui.confirmed_text(r), ui.match_text(r), ui.notes_text(r), ui.group_title(r))
+        rating = ui.rating_of(r)
+        return (label, ui.anilist_text(r), ui.air_status_text(r), ui.rating_text(rating.value if rating else None),
+                r.episodes, r.dual, r.original_only, r.english_only, ui.confirmed_text(r), ui.match_text(r),
+                ui.notes_text(r), ui.group_title(r))
 
     def _parent_values(self, row: ui.ShowRow, label: str) -> tuple:
         sources: list[str] = []
@@ -1268,14 +1272,15 @@ class App:
             if ui.group_title(s) not in groups:
                 groups.append(ui.group_title(s))
         speaker = ui.show_air_status(row.all_seasons)
-        return (label, row.seasons_text(), ui.air_status_text(speaker) if speaker else "-", row.total("episodes"),
+        return (label, row.seasons_text(), ui.air_status_text(speaker) if speaker else "-",
+                ui.rating_text(ui.show_rating(row.all_seasons)), row.total("episodes"),
                 row.total("dual"), row.total("original_only"), row.total("english_only"), ", ".join(sources) or "-", "", row.also_text(),
                 ", ".join(groups))
 
     @staticmethod
     def _episode_values(f: FileResult, label: str, note: str) -> tuple:
         tick = "✓"
-        return (label, "", "", "", tick if f.status is FileStatus.DUAL else "",
+        return (label, "", "", "", "", tick if f.status is FileStatus.DUAL else "",
                 tick if f.status is FileStatus.ORIGINAL_ONLY else "", tick if f.status is FileStatus.ENGLISH_ONLY else "",
                 "", "", note, "")
 
@@ -1285,6 +1290,9 @@ class App:
             return row.total("original_only") / max(1, row.total("episodes"))
         if column == "episodes":
             return row.total("episodes")
+        if column == "rating":  # unrated last
+            rating = ui.show_rating(row.all_seasons)
+            return -1.0 if rating is None else rating
         if column == "dual":
             return row.total("dual")
         if column == "orig":
@@ -1883,6 +1891,7 @@ class App:
                                       self.config.confidence_threshold, self.config.air_status_source)
                 if self.config.air_status_source == "sonarr":
                     new.air = result.air  # a new AniList match doesn't change what Sonarr says
+                new.rating = result.rating  # nor does it change Sonarr's rating
                 self.queue.put(("replace", (new,)))
             except Exception as exc:
                 log.exception("Re-check failed")
@@ -1917,13 +1926,15 @@ class App:
                 import csv  # only needed here
                 writer = csv.writer(fh)
                 writer.writerow(["Group", "Show", "Season", "Matched on AniList", "AniList page", "Air status",
-                                 "Episodes", "Dual audio", "Original language only", "English only", "Dub confirmed by",
+                                 "Rating (out of 10)", "Rating from", "Episodes", "Dual audio", "Original language only", "English only", "Dub confirmed by",
                                  "Match %",
                                  "Notes", "Folder"])
                 for row in rows:
                     for r in row.seasons:
+                        rating = ui.rating_of(r)
                         writer.writerow([ui.group_title(r), r.group.show_title, r.group.season_label,
                                          ui.anilist_text(r), r.match.url if r.match else "", ui.air_status_text(r),
+                                         f"{rating.value:.1f}" if rating else "", rating.source if rating else "",
                                          r.episodes, r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
                                          ui.match_text(r),
                                          ui.notes_text(r), r.group.folder_name])

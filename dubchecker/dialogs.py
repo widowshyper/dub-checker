@@ -108,6 +108,7 @@ class EpisodeDetailsDialog(Dialog):
         else:
             rows.append(("AniList:", ui.anilist_text(result)))
         rows.append(("Match:", ui.match_info_text(result)))
+        rows.append(("Rating:", ui.rating_detail(result)))
         rows.append(("English dub:", ui.dub_status_text(result)))
         if result.notes:
             rows.append(("Notes:", ui.notes_text(result)))
@@ -440,6 +441,7 @@ class SettingsDialog(Dialog):
         self.expiry = tk.StringVar(value=str(cfg.cache_expiry_days))
         self.air_source = tk.StringVar(value=cfg.air_status_source)
         self.dub_grace = tk.StringVar(value=str(cfg.dub_grace_days))
+        self.anilist_ratings = tk.BooleanVar(value=cfg.anilist_ratings)
         self.workers = tk.StringVar(value=str(cfg.probe_workers))
         self.net_enabled = tk.BooleanVar(value=cfg.network_workers_enabled)
         self.net_workers = tk.StringVar(value=str(cfg.network_workers))
@@ -677,6 +679,13 @@ class SettingsDialog(Dialog):
             variable.trace_add("write", lambda *_: self._update_air_hint())
         self._update_air_hint()
 
+        group = self._group(page, "Ratings")
+        self._switch(group, "Rate shows Sonarr doesn't by AniList's score", self.anilist_ratings,
+                     "Each show's rating (out of 10) comes from Sonarr when it's set up and has one. Otherwise "
+                     "AniList's average score for the season is used. Seasons decided from your files alone "
+                     "haven't been looked up on AniList, so a scan looks them up for their score, which takes a "
+                     "while the first time. Turn this off to skip that.")
+
         group = self._group(page, "Saved information")
         clear = self._setting(group, "Saved online info", lambda row: glass.PillButton(
             row, self.app, "Clear", self._clear_online, backdrop="card"))
@@ -889,6 +898,7 @@ class SettingsDialog(Dialog):
         cfg.cache_expiry_days = expiry
         cfg.air_status_source = self.air_source.get()
         cfg.dub_grace_days = dub_grace
+        cfg.anilist_ratings = self.anilist_ratings.get()
         cfg.probe_workers = workers
         cfg.network_workers_enabled = self.net_enabled.get()
         cfg.network_workers = net_workers
