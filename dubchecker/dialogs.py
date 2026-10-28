@@ -110,6 +110,7 @@ class EpisodeDetailsDialog(Dialog):
             rows.append(("AniList:", ui.anilist_text(result)))
         rows.append(("Match:", ui.match_info_text(result)))
         rows.append(("Rating:", ui.rating_detail(result)))
+        rows.append(("Size:", f"{ui.size_text(result.size)} on disk, {ui.plural(result.episodes, 'episode')}"))
         rows.append(("English dub:", ui.dub_status_text(result)))
         if result.notes:
             rows.append(("Notes:", ui.notes_text(result)))
@@ -315,11 +316,15 @@ class DeleteDialog(Dialog):
                            foreground=app.palette["fg"], selectbackground=app.palette["card_selected"],
                            selectforeground=app.palette["fg"], font="SunValleyBodyFont")
         names.grid(row=2, column=0, sticky="nsew")
-        by_key = app.model.results
+        by_key, shows = app.model.results, app.model.by_show()
+        self.picked_size = self.whole_size = 0  # bytes in the selected seasons, and in the whole shows
         for target, keys in targets:
+            size = sum(by_key[k].size for k in keys if k in by_key)
+            self.picked_size += size
+            self.whole_size += sum(s.size for s in shows.get(target.folder_name, []))
             seasons = "" if target.seasons is None else " (" + ", ".join(
                 by_key[k].group.season_label for k in keys if k in by_key) + ")"
-            names.insert("end", f"  {target.title}{seasons}")
+            names.insert("end", f"  {target.title}{seasons}  -  {ui.size_text(size)}")
 
         self.choice = tk.StringVar(value="")
         choices = ttk.Frame(frame)
@@ -332,17 +337,24 @@ class DeleteDialog(Dialog):
                 row=row * 2 + 1, column=0, sticky="w", padx=(self.px(30), 0))
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=4, column=0, sticky="e", pady=(self.px(18), 0))
+        buttons.grid(row=4, column=0, sticky="ew", pady=(self.px(18), 0))
+        buttons.columnconfigure(0, weight=1)
+        self.space = ttk.Label(buttons, style="Strong.TLabel")
+        self.space.grid(row=0, column=0, sticky="w")
         self.delete_button = ttk.Button(buttons, text="Delete", style="Accent.TButton", command=self._delete)
-        self.delete_button.pack(side="left", padx=(0, self.px(8)))
+        self.delete_button.grid(row=0, column=1, padx=(0, self.px(8)))
         cancel = ttk.Button(buttons, text="Cancel", command=self.close)
-        cancel.pack(side="left")
+        cancel.grid(row=0, column=2)
         self._update_button()
         self.present(680, 420 + 22 * min(8, len(targets)))
         cancel.focus_set()
 
     def _update_button(self) -> None:
-        self.delete_button.state(("!disabled",) if self.choice.get() else ("disabled",))
+        action = self.choice.get()
+        self.delete_button.state(("!disabled",) if action else ("disabled",))
+        size = self.whole_size if action == DELETE_SHOW else self.picked_size
+        self.space.configure(text=f"Frees about {ui.size_text(size)}" if action and size
+                             else f"Selected: {ui.size_text(self.picked_size)}")
 
     def _delete(self) -> None:
         action = self.choice.get()

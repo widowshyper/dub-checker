@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
-from dubchecker.models import AirInfo
+from dubchecker.models import AirInfo, size_text
 
 
 class SonarrError(Exception):
@@ -28,6 +28,7 @@ class SonarrSeries:
     tags: list = field(default_factory=list)           # Sonarr tag ids
     rating: float | None = None                        # out of 10 (from Sonarr's metadata source); None if unrated
     votes: int = 0
+    size: int = 0                                      # bytes on disk, from Sonarr's statistics
 
 
 def _rating(data: Any) -> tuple[float | None, int]:
@@ -37,6 +38,13 @@ def _rating(data: Any) -> tuple[float | None, int]:
     except (AttributeError, TypeError, ValueError):
         return None, 0
     return (value if value > 0 and votes > 0 else None), votes
+
+
+def _int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def normalise_url(url: str) -> str:
@@ -142,7 +150,8 @@ class SonarrClient:
                              status=str(s.get("status") or "").lower(), seasons=list(s.get("seasons") or []),
                              title_slug=str(s.get("titleSlug") or ""),
                              tags=[int(t) for t in s.get("tags") or [] if str(t).isdigit()],
-                             rating=_rating(s.get("ratings"))[0], votes=_rating(s.get("ratings"))[1])
+                             rating=_rating(s.get("ratings"))[0], votes=_rating(s.get("ratings"))[1],
+                             size=_int((s.get("statistics") or {}).get("sizeOnDisk")))
                 for s in self._get("/api/v3/series") or [] if "id" in s]
 
     def calendar(self, start: str, end: str) -> list[dict]:
@@ -308,17 +317,19 @@ class DeleteReport:
     action: str
     done: list[str] = field(default_factory=list)            # folder names of the shows dealt with
     files: int = 0                                           # episode files deleted (not counted for DELETE_SHOW)
+    freed: int = 0                                           # bytes freed on the disk, as Sonarr counts them
     not_in_sonarr: list[str] = field(default_factory=list)   # titles
     failed: list[str] = field(default_factory=list)          # "title: why"
 
     def text(self) -> str:
         shows = f"{len(self.done):,} show" + ("" if len(self.done) == 1 else "s")
         if self.action == DELETE_SHOW:
-            text = f"Deleted {shows} from Sonarr, with their files."
+            text = f"Deleted {shows} from Sonarr, with their files"
         else:
             files = f"{self.files:,} episode file" + ("" if self.files == 1 else "s")
-            text = f"Deleted {files} of {shows}" + (" and unmonitored them in Sonarr."
-                                                    if self.action == DELETE_FILES_UNMONITOR else ".")
+            text = f"Deleted {files} of {shows}" + (" and unmonitored them in Sonarr"
+                                                    if self.action == DELETE_FILES_UNMONITOR else "")
+        text += f", freeing {size_text(self.freed)}." if self.freed else "."
         if self.not_in_sonarr:
             text += f" Not found in Sonarr: {', '.join(self.not_in_sonarr)}."
         if self.failed:
@@ -340,10 +351,12 @@ def delete_from_sonarr(client: SonarrClient, targets: list[DeleteTarget], action
         try:
             if action == DELETE_SHOW:
                 client.delete_series(series.id)
+                report.freed += series.size
             else:
                 wanted = target.seasons
-                files = [int(ef["id"]) for ef in client.episode_files(series.id)
-                         if "id" in ef and (wanted is None or ef.get("seasonNumber") in wanted)]
+                chosen = [ef for ef in client.episode_files(series.id)
+                          if "id" in ef and (wanted is None or ef.get("seasonNumber") in wanted)]
+                files = [int(ef["id"]) for ef in chosen]
                 if action == DELETE_FILES_UNMONITOR:  # first, so Sonarr can't start downloading them again
                     episodes = [int(e["id"]) for e in client.episodes(series.id)
                                 if "id" in e and (wanted is None or e.get("seasonNumber") in wanted)]
@@ -353,6 +366,7 @@ def delete_from_sonarr(client: SonarrClient, targets: list[DeleteTarget], action
                 if files:
                     client.delete_episode_files(files)
                 report.files += len(files)
+                report.freed += sum(_int(ef.get("size")) for ef in chosen)
         except SonarrError as exc:
             report.failed.append(f"{target.title}: {exc}")
             continue

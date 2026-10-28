@@ -45,6 +45,7 @@ COLUMNS = (
     ("air", "Air status", 150, False),
     ("rating", "Rating", 70, False),
     ("episodes", "Episodes", 70, False),
+    ("size", "Size", 80, False),
     ("dual", "Dual audio", 90, False),
     ("orig", "Original only", 105, False),
     ("eng", "English only", 95, False),
@@ -53,7 +54,7 @@ COLUMNS = (
     ("notes", "Notes", 220, True),
     ("group", "Group", 140, False),  # only shown when several groups are listed together
 )
-NUMERIC_COLUMNS = frozenset({"audio", "rating", "episodes", "dual", "orig", "eng", "match"})
+NUMERIC_COLUMNS = frozenset({"audio", "rating", "episodes", "size", "dual", "orig", "eng", "match"})
 BAR_WIDTH, BAR_HEIGHT = 96, 11  # the audio bar in the first column, at 100 % scaling
 DRAG_THRESHOLD = 10  # pixels (at 100 %) a tab must move before a press counts as dragging, not clicking
 # Episode rows: only the episodes that need attention are coloured; the square in the Audio column
@@ -1273,8 +1274,8 @@ class App:
     def _season_values(self, r: ShowResult, label: str) -> tuple:
         rating = ui.rating_of(r)
         return (label, ui.anilist_text(r), ui.air_status_text(r), ui.rating_text(rating.value if rating else None),
-                r.episodes, r.dual, r.original_only, r.english_only, ui.confirmed_text(r), ui.match_text(r),
-                ui.notes_text(r), ui.group_title(r))
+                r.episodes, ui.size_text(r.size), r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
+                ui.match_text(r), ui.notes_text(r), ui.group_title(r))
 
     def _parent_values(self, row: ui.ShowRow, label: str) -> tuple:
         sources: list[str] = []
@@ -1287,14 +1288,14 @@ class App:
                 groups.append(ui.group_title(s))
         speaker = ui.show_air_status(row.all_seasons)
         return (label, row.seasons_text(), ui.air_status_text(speaker) if speaker else "-",
-                ui.rating_text(ui.show_rating(row.all_seasons)), row.total("episodes"),
+                ui.rating_text(ui.show_rating(row.all_seasons)), row.total("episodes"), ui.size_text(row.total("size")),
                 row.total("dual"), row.total("original_only"), row.total("english_only"), ", ".join(sources) or "-", "", row.also_text(),
                 ", ".join(groups))
 
     @staticmethod
     def _episode_values(f: FileResult, label: str, note: str) -> tuple:
         tick = "✓"
-        return (label, "", "", "", "", tick if f.status is FileStatus.DUAL else "",
+        return (label, "", "", "", "", ui.size_text(f.size), tick if f.status is FileStatus.DUAL else "",
                 tick if f.status is FileStatus.ORIGINAL_ONLY else "", tick if f.status is FileStatus.ENGLISH_ONLY else "",
                 "", "", note, "")
 
@@ -1304,6 +1305,8 @@ class App:
             return row.total("original_only") / max(1, row.total("episodes"))
         if column == "episodes":
             return row.total("episodes")
+        if column == "size":
+            return row.total("size")
         if column == "rating":  # unrated last
             rating = ui.show_rating(row.all_seasons)
             return -1.0 if rating is None else rating
@@ -1859,12 +1862,16 @@ class App:
         keys = {target.folder_name: season_keys for target, season_keys in targets}
         if action == DELETE_SHOW:  # the whole show goes, whichever seasons were picked
             keys = {folder: [s.key for s in self.model.by_show().get(folder, [])] for folder in keys}
+        sizes = {key: self.model.results[key].size for season_keys in keys.values() for key in season_keys
+                 if key in self.model.results}
 
         def work() -> None:
             try:
                 client = SonarrClient(self.config.sonarr_url, self.config.sonarr_api_key)
                 report = delete_from_sonarr(client, [target for target, _ in targets], action)
                 gone = [key for folder in report.done for key in keys[folder]]
+                if not report.freed:  # Sonarr didn't say how big the files were; go by the scan
+                    report.freed = sum(sizes.get(key, 0) for key in gone)
                 self.queue.put(("deleted", (gone, report.text(), bool(report.failed))))
             except SonarrError as exc:
                 self.queue.put(("error", (f"Couldn't delete in Sonarr: {exc}",)))
@@ -2009,7 +2016,7 @@ class App:
                 import csv  # only needed here
                 writer = csv.writer(fh)
                 writer.writerow(["Group", "Show", "Season", "Matched on AniList", "AniList page", "Air status",
-                                 "Rating (out of 10)", "Rating from", "Episodes", "Dual audio", "Original language only", "English only", "Dub confirmed by",
+                                 "Rating (out of 10)", "Rating from", "Episodes", "Size (GB)", "Dual audio", "Original language only", "English only", "Dub confirmed by",
                                  "Match %",
                                  "Notes", "Folder"])
                 for row in rows:
@@ -2018,7 +2025,7 @@ class App:
                         writer.writerow([ui.group_title(r), r.group.show_title, r.group.season_label,
                                          ui.anilist_text(r), r.match.url if r.match else "", ui.air_status_text(r),
                                          f"{rating.value:.1f}" if rating else "", rating.source if rating else "",
-                                         r.episodes, r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
+                                         r.episodes, f"{r.size / 1024 ** 3:.2f}", r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
                                          ui.match_text(r),
                                          ui.notes_text(r), r.group.folder_name])
         except OSError as exc:

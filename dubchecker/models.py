@@ -129,6 +129,15 @@ class FileResult:
         return self.status.value
 
 
+def size_text(size: int) -> str:
+    """Bytes as Windows Explorer shows them: '12.3 GB', '850 MB'; '-' when unknown."""
+    if size <= 0:
+        return "-"
+    if size < 1024 ** 3:
+        return f"{size / 1024 ** 2:,.0f} MB"
+    return f"{size / 1024 ** 3:,.1f} GB"
+
+
 def language_word(files: list[FileResult]) -> str:
     """'Japanese' when all these files share that original language, else 'original-language'."""
     languages = {f.original for f in files}
@@ -268,6 +277,11 @@ class ShowResult:
     @property
     def episodes(self) -> int:
         return len(self.files)
+
+    @functools.cached_property
+    def size(self) -> int:
+        """Bytes on disk, all episodes together."""
+        return sum(f.size for f in self.files)
 
     @property
     def dual(self) -> int:

@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 
 from dubchecker.dub_sources import SOURCE_FILES
 from dubchecker.models import (Category, FileResult, FileStatus, Lang, Rating, ShowResult, rating_from_match,
-                               season_sort_key)
+                               season_sort_key, size_text)
 from dubchecker.sonarr import DeleteTarget
 
 ASSETS = Path(__file__).resolve().parent / "assets"

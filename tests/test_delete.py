@@ -11,10 +11,13 @@ from dubchecker.models import Category, FileResult, FileStatus, ShowGroup, ShowR
 from dubchecker.sonarr import (DELETE_FILES, DELETE_FILES_UNMONITOR, DELETE_SHOW, DeleteTarget, SonarrClient,
                                delete_from_sonarr)
 
-SERIES = [{"id": 1, "title": "Attack on Titan", "path": "/tv/Attack on Titan (2013)"},
+GB = 1024 ** 3
+SERIES = [{"id": 1, "title": "Attack on Titan", "path": "/tv/Attack on Titan (2013)",
+           "statistics": {"sizeOnDisk": 40 * GB}},
           {"id": 2, "title": "Frieren", "path": "/tv/Frieren"},
           {"id": 3, "title": "Broken", "path": "/tv/Broken"}]
-FILES = {1: [{"id": 11, "seasonNumber": 1}, {"id": 12, "seasonNumber": 2}, {"id": 13, "seasonNumber": 2}],
+FILES = {1: [{"id": 11, "seasonNumber": 1, "size": GB}, {"id": 12, "seasonNumber": 2, "size": GB},
+            {"id": 13, "seasonNumber": 2, "size": GB // 2}],
          2: [{"id": 21, "seasonNumber": 1}], 3: [{"id": 31, "seasonNumber": 1}]}
 EPISODES = {1: [{"id": 101, "seasonNumber": 1}, {"id": 102, "seasonNumber": 2}, {"id": 103, "seasonNumber": 3}],
             2: [{"id": 201, "seasonNumber": 1}], 3: [{"id": 301, "seasonNumber": 1}]}
@@ -72,13 +75,14 @@ class DeleteInSonarrTests(unittest.TestCase):
         self.assertEqual(changes, [("DELETE", "/series/1", {"deleteFiles": "true", "addImportListExclusion": "false"},
                                     None)])
         self.assertEqual((report.done, report.not_in_sonarr), (["Attack on Titan (2013)"], ["Not There"]))
-        self.assertTrue(report.text().startswith("Deleted 1 show from Sonarr"))
+        self.assertEqual(report.text(), "Deleted 1 show from Sonarr, with their files, freeing 40.0 GB. "
+                                        "Not found in Sonarr: Not There.")
 
     def test_just_the_episodes_of_some_seasons(self) -> None:
         report, changes = self.run_delete([DeleteTarget("Attack on Titan (2013)", "Attack on Titan", {2})],
                                           DELETE_FILES)
         self.assertEqual(changes, [("DELETE", "/episodefile/bulk", {}, {"episodeFileIds": [12, 13]})])
-        self.assertEqual(report.text(), "Deleted 2 episode files of 1 show.")
+        self.assertEqual(report.text(), "Deleted 2 episode files of 1 show, freeing 1.5 GB.")
 
     def test_episodes_and_unmonitor_the_whole_show(self) -> None:
         report, changes = self.run_delete([DeleteTarget("Frieren", "Frieren")], DELETE_FILES_UNMONITOR)
@@ -89,7 +93,7 @@ class DeleteInSonarrTests(unittest.TestCase):
         self.assertFalse(series[3]["monitored"])
         self.assertFalse(any(s["monitored"] for s in series[3]["seasons"]))
         self.assertEqual(delete[3], {"episodeFileIds": [21]})
-        self.assertIn("unmonitored", report.text())
+        self.assertEqual(report.text(), "Deleted 1 episode file of 1 show and unmonitored them in Sonarr.")
 
     def test_unmonitor_only_the_chosen_seasons(self) -> None:
         _, changes = self.run_delete([DeleteTarget("Attack on Titan (2013)", "Attack on Titan", {2})],
@@ -106,6 +110,25 @@ class DeleteInSonarrTests(unittest.TestCase):
         self.assertEqual(len(report.failed), 1)
         self.assertIn("Broken", report.text())
         self.assertEqual(changes, [("DELETE", "/episodefile/bulk", {}, {"episodeFileIds": [21]})])
+
+
+class SizeTests(unittest.TestCase):
+    def test_wording(self) -> None:
+        self.assertEqual([ui.size_text(n) for n in (0, 850 * 1024 ** 2, 12_345 * 1024 ** 2, 2048 * GB)],
+                         ["-", "850 MB", "12.1 GB", "2,048.0 GB"])
+
+    def test_a_season_and_a_show(self) -> None:
+        a = ShowResult(ShowGroup("a|S1", "a", "a", season=1), [FileResult("1", GB), FileResult("2", GB // 2)],
+                       Category.FULLY_DUBBED)
+        self.assertEqual(a.size, GB + GB // 2)
+        model = ui.ResultsModel()
+        model.add(a)
+        model.add(ShowResult(ShowGroup("a|S2", "a", "a", season=2), [FileResult("3", GB)], Category.NEEDS_DUB))
+        self.assertEqual(model.rows(set())[0].total("size"), 2 * GB + GB // 2)
+
+    def test_sonarr_series_size(self) -> None:
+        series = SonarrClient("http://sonarr", "key", session=FakeSession()).series()
+        self.assertEqual([s.size for s in series], [40 * GB, 0, 0])
 
 
 class SelectionTests(unittest.TestCase):
@@ -156,7 +179,9 @@ class DeleteWindowTests(unittest.TestCase):
         self.root = tk.Tk()
         self.root.withdraw()
         self.app = App(self.root, ctx)
-        for r in (season("AoT", 1, "Attack on Titan"), season("AoT", 2, "Attack on Titan"), season("Lain", None)):
+        for r, size in ((season("AoT", 1, "Attack on Titan"), 2 * GB), (season("AoT", 2, "Attack on Titan"), 5 * GB // 2),
+                        (season("Lain", None), GB)):
+            r.files[0].size = size
             self.app.model.add(r)
         self.app.expanded.add("AoT")
         self.app.select_tabs(set())  # list every show
@@ -185,6 +210,20 @@ class DeleteWindowTests(unittest.TestCase):
         (targets, action), = self.asked
         self.assertEqual(action, DELETE_FILES_UNMONITOR)
         self.assertEqual([(t.folder_name, t.seasons) for t, _ in targets], [("AoT", None), ("Lain", None)])
+
+    def test_the_dialog_says_how_much_is_freed(self) -> None:
+        dialog = self.open_dialog("s|AoT|S1", "s|" + season_key("Lain", None))
+        self.assertEqual(dialog.space.cget("text"), "Selected: 3.0 GB")
+        for action, freed in ((DELETE_FILES, "3.0 GB"), (DELETE_SHOW, "5.5 GB")):  # the whole of AoT goes
+            dialog.choice.set(action)
+            dialog._update_button()
+            self.assertEqual(dialog.space.cget("text"), f"Frees about {freed}")
+        dialog.close()
+
+    def test_the_size_column(self) -> None:
+        tree = self.app.tree
+        self.assertEqual(tree.set("p|AoT", "size"), "4.5 GB")
+        self.assertEqual(tree.set("s|AoT|S2", "size"), "2.5 GB")
 
     def test_deleted_seasons_leave_the_list(self) -> None:
         self.app._on_deleted(["AoT|S2"], "Deleted 3 episode files of 1 show.", False)

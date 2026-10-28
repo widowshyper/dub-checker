@@ -105,6 +105,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
   - **Hide a tab** by unticking it in the **Edit** menu next to Library, or right-click it and choose **Hide this tab**. Tick it again to bring it back. Hidden tabs stay hidden after a restart.
 - **English Only tab and English only column:** the English Only tab lists seasons with episodes that only have English audio, so the original language (Japanese, Korean or Chinese) is missing. Replace them with dual-audio releases to get both. Like Airing, it cuts across the other groups, and the **English only** column counts these episodes in every tab.
 - **Airing tab and Air status column:** these show whether a show is still airing, not out yet, on hiatus, finished or cancelled, with the next episode's date while it airs (for example "Airing - ep 8 on 3 Oct"). The Airing tab lists shows that are still airing or not out yet, where an English dub may still be on its way. It cuts across the other groups. Click the **Air status** header to sort airing shows first.
+- **The Size column** shows how much disk space each show, season and episode takes up (as Windows counts it, so 1 GB is 1,024 MB). A show row counts all its seasons. Click the header to sort the biggest first.
 - **The Rating column** shows how well liked each show is, out of 10:
   - **From Sonarr** when it's set up and rates the series (its rating comes from Sonarr's metadata source). Shows are matched to Sonarr by folder name, then title, so this works after a Local files scan too.
   - **Otherwise from AniList's average score** for the season. Seasons decided from your files alone haven't been looked up on AniList, so a scan looks them up for their score; this takes a while the first time, and answers are saved. Turn it off with **Settings > General > Rate shows Sonarr doesn't by AniList's score**.
@@ -139,7 +140,7 @@ While it scans, the panel shows which step it's on (for example "Step 2 of 3: Ch
 - **Air status** (the drop-down next to Search) lists only seasons that are Airing, Not yet aired, On hiatus, Finished, Cancelled or Not checked. The tab counts follow it, for example "1 of 19" when only 1 of a tab's 19 shows is finished. It's hidden when air status is off.
 - **Dismissing a show:** right-click it and choose **Dismiss this show**. It's hidden from every tab, the counts and exports, and stays hidden after a rescan. **Dismissed shows** above the list shows what you've dismissed and brings shows back.
 - **Selecting several shows:** Ctrl-click or Shift-click rows to select more than one, then right-click them to dismiss them all at once or delete them in Sonarr (see [Deleting shows](#deleting-shows)).
-- **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group, air status and rating (and where the rating came from).
+- **Export list...** saves what's listed as CSV (UTF-8, opens in Excel), one row per season, with each season's group, air status, size in GB and rating (and where the rating came from).
 - **Your results are kept.** When you close Dub Checker and open it again, the last scan is back, with the same tab and open shows, and the status line says when it was made. A scan that was stopped, or still running when you closed the window, keeps the part that was finished.
 - **Clear results** empties the table, resets the window and forgets the saved list, so it doesn't come back next time. Your settings, manual matches, and what Dub Checker knows about your files and AniList are kept, so the next scan is quick. To forget saved AniList answers, click **Clear** next to Saved online info in **Settings > General**.
 
@@ -217,7 +218,8 @@ Select one or more shows or seasons (Ctrl-click or Shift-click for several), the
 | **Just delete their episodes** | Sonarr deletes the episode files. The shows stay in Sonarr, still monitored, so it may download them again. |
 
 - A show row means the whole show; season rows mean only those seasons. Episode rows are left out.
-- Files are deleted by Sonarr, from the disk, and can't be got back. The deleted shows and seasons then leave the list.
+- Each show in the window has its size, and the bottom says how much the choice you picked frees. Deleting a show entirely frees the whole show, not just the seasons you picked.
+- Files are deleted by Sonarr, from the disk, and can't be got back. The deleted shows and seasons then leave the list, and the status line says how much space was freed (as Sonarr counts it).
 - Shows are found in Sonarr by folder name, then title, so this works after a Local files scan too. Shows Sonarr doesn't have are skipped and named on the status line.
 - It needs Sonarr set up in Settings.
 
