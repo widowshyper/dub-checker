@@ -109,6 +109,8 @@ class EpisodeDetailsDialog(Dialog):
         else:
             rows.append(("AniList:", ui.anilist_text(result)))
         rows.append(("Match:", ui.match_info_text(result)))
+        if ui.season_year(result):
+            rows.append(("Year:", str(ui.season_year(result))))
         rows.append(("Rating:", ui.rating_detail(result)))
         rows.append(("Size:", f"{size_text(result.size)} on disk, {ui.plural(result.episodes, 'episode')}"))
         rows.append(("English dub:", ui.dub_status_text(result)))

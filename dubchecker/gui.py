@@ -39,6 +39,7 @@ SCHEDULE_CHECK_MS = 60_000  # how often to see whether a scheduled scan is due
 # (id, heading, width at 100 %, stretches)
 COLUMNS = (
     ("show", "Show", 230, True),
+    ("year", "Year", 60, False),
     ("anilist", "Matched on AniList", 220, False),
     ("air", "Air status", 150, False),
     ("rating", "Rating", 70, False),
@@ -52,7 +53,7 @@ COLUMNS = (
     ("notes", "Notes", 220, True),
     ("group", "Group", 140, False),  # only shown when several groups are listed together
 )
-NUMERIC_COLUMNS = frozenset({"audio", "rating", "episodes", "size", "dual", "orig", "eng", "match"})
+NUMERIC_COLUMNS = frozenset({"audio", "year", "rating", "episodes", "size", "dual", "orig", "eng", "match"})
 BAR_WIDTH, BAR_HEIGHT = 96, 11  # the audio bar in the first column, at 100 % scaling
 DRAG_THRESHOLD = 10  # pixels (at 100 %) a tab must move before a press counts as dragging, not clicking
 # Episode rows: only the episodes that need attention are coloured; the square in the Audio column
@@ -1277,7 +1278,8 @@ class App(SonarrActions):
 
     def _season_values(self, r: ShowResult, label: str) -> tuple:
         rating = ui.rating_of(r)
-        return (label, ui.anilist_text(r), ui.air_status_text(r), ui.rating_text(rating.value if rating else None),
+        return (label, ui.year_text(ui.season_year(r)), ui.anilist_text(r), ui.air_status_text(r),
+                ui.rating_text(rating.value if rating else None),
                 r.episodes, size_text(r.size), r.dual, r.original_only, r.english_only, ui.confirmed_text(r),
                 ui.match_text(r), ui.notes_text(r), ui.group_title(r))
 
@@ -1291,7 +1293,8 @@ class App(SonarrActions):
             if ui.group_title(s) not in groups:
                 groups.append(ui.group_title(s))
         speaker = ui.show_air_status(row.all_seasons)
-        return (label, row.seasons_text(), ui.air_status_text(speaker) if speaker else "-",
+        return (label, ui.year_text(ui.show_year(row.all_seasons)), row.seasons_text(),
+                ui.air_status_text(speaker) if speaker else "-",
                 ui.rating_text(ui.show_rating(row.all_seasons)), row.total("episodes"), size_text(row.total("size")),
                 row.total("dual"), row.total("original_only"), row.total("english_only"), ", ".join(sources) or "-",
                 "", row.also_text(), ", ".join(groups))
@@ -1299,7 +1302,7 @@ class App(SonarrActions):
     @staticmethod
     def _episode_values(f: FileResult, label: str, note: str) -> tuple:
         tick = "✓"
-        return (label, "", "", "", "", size_text(f.size), tick if f.status is FileStatus.DUAL else "",
+        return (label, "", "", "", "", "", size_text(f.size), tick if f.status is FileStatus.DUAL else "",
                 tick if f.status is FileStatus.ORIGINAL_ONLY else "",
                 tick if f.status is FileStatus.ENGLISH_ONLY else "",
                 "", "", note, "")
@@ -1312,6 +1315,9 @@ class App(SonarrActions):
             return row.total("episodes")
         if column == "size":
             return row.total("size")
+        if column == "year":  # unknown years last, whichever way round
+            year = ui.show_year(row.all_seasons)
+            return year if year is not None else (-1 if self.sort_desc else 10_000)
         if column == "rating":  # unrated last
             rating = ui.show_rating(row.all_seasons)
             return -1.0 if rating is None else rating
@@ -1860,7 +1866,7 @@ class App(SonarrActions):
             with open(path, "w", newline="", encoding="utf-8-sig") as fh:
                 import csv  # only needed here
                 writer = csv.writer(fh)
-                writer.writerow(["Group", "Show", "Season", "Matched on AniList", "AniList page", "Air status",
+                writer.writerow(["Group", "Show", "Season", "Year", "Matched on AniList", "AniList page", "Air status",
                                  "Rating (out of 10)", "Rating from", "Episodes", "Size (GB)", "Dual audio",
                                  "Original language only", "English only", "Dub confirmed by", "Match %", "Notes",
                                  "Folder"])
@@ -1868,7 +1874,8 @@ class App(SonarrActions):
                     for r in row.seasons:
                         rating = ui.rating_of(r)
                         writer.writerow([ui.group_title(r), r.group.show_title, r.group.season_label,
-                                         ui.anilist_text(r), r.match.url if r.match else "", ui.air_status_text(r),
+                                         ui.season_year(r) or "", ui.anilist_text(r),
+                                         r.match.url if r.match else "", ui.air_status_text(r),
                                          f"{rating.value:.1f}" if rating else "", rating.source if rating else "",
                                          r.episodes, f"{r.size / 1024 ** 3:.2f}", r.dual, r.original_only,
                                          r.english_only, ui.confirmed_text(r), ui.match_text(r), ui.notes_text(r),

@@ -1,6 +1,6 @@
 # Dub Checker: Project Scope
 
-**Version:** 3.2.0
+**Version:** 3.3.0
 **Repository:** https://github.com/widowshyper/dub-checker (public, MIT license)
 **Note:** All code is 100% AI-generated.
 
@@ -41,6 +41,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 - Shows can be dismissed (hidden everywhere, even after a rescan) and brought back from a Dismissed shows window.
 - Several shows or seasons can be selected and deleted through Sonarr: the shows entirely (with their folders), their episode files and unmonitor them, or just their episode files. Several can be dismissed at once too. The window shows each show's size and how much the chosen option frees; afterwards the status line says how much was freed.
 - A Size column shows each show's, season's and episode's size on disk (also in the episode window and the CSV export).
+- A Year column shows when each season started airing (AniList, else the folder name or Sonarr) and each show's earliest year; it sorts with unknown years last, Search finds a year, and it's in the episode window and the CSV export.
 - Results, open rows and selected tabs are kept after a restart. Clear results removes them.
 
 **Ratings**
@@ -112,7 +113,7 @@ Dub Checker is a desktop app that scans an anime library and reports which shows
 
 **Build and test**
 - PyInstaller (`build.bat`) produces the portable one-folder app and zip.
-- A unittest suite of 371 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
+- A unittest suite of 376 tests uses synthetic MKV files, a mock Sonarr server and fake AniList clients.
 
 ## Out of scope
 

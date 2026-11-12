@@ -142,6 +142,22 @@ def match_text(r: ShowResult) -> str:
     return "Your pick" if r.match.manual else f"{r.match.confidence:.0f}%"
 
 
+def season_year(r: ShowResult) -> int | None:
+    """The year a season started airing: AniList's for its match, else the show's year from its folder name
+    or Sonarr."""
+    return (r.match.year if r.match and r.match.year else None) or r.group.year
+
+
+def show_year(seasons: list[ShowResult]) -> int | None:
+    """When a show first came out: the earliest of its seasons' years and the show's own year."""
+    years = [y for s in seasons for y in (season_year(s), s.group.year) if y]
+    return min(years) if years else None
+
+
+def year_text(year: int | None) -> str:
+    return str(year) if year else "-"
+
+
 def rating_of(r: ShowResult) -> Rating | None:
     """Sonarr's rating for the series, else AniList's average score for the season."""
     return r.rating or rating_from_match(r.match)
@@ -457,7 +473,9 @@ class ResultsModel:
     def _matches(row: ShowRow, needle: str) -> bool:
         haystack = [row.title, row.show_id] + [s.match.title for s in row.seasons if s.match]
         haystack += [s.match.romaji for s in row.seasons if s.match]
-        return any(needle in text.casefold() for text in haystack if text)
+        if any(needle in text.casefold() for text in haystack if text):
+            return True
+        return needle.isdigit() and len(needle) == 4 and int(needle) in {season_year(s) for s in row.all_seasons}
 
 
 # ---------------------------------------------------------------- misc helpers

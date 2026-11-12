@@ -90,8 +90,9 @@ To act on several shows at once, Ctrl-click or Shift-click them. Press Delete
 (or right-click > Delete from Sonarr...) to have Sonarr delete them in one of
 three ways: the shows entirely, their episodes and unmonitor them, or just
 their episodes. Files are deleted from the disk and can't be got back.
-The Size column shows how much space each show takes up, and the status line
-says how much space a delete freed.
+The Year column shows when each show came out (click it to sort by year,
+or type a year in Search). The Size column shows how much space each show
+takes up, and the status line says how much space a delete freed.
 
 Your last results are kept when you close Dub Checker and shown again the
 next time you open it.
